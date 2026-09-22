@@ -141,6 +141,72 @@ struct EPUBReadingStyleTests {
         #expect(!html.contains("overflow-x: auto"))
     }
 
+    @Test("Columns is a row of section boxes, each scrolled within itself")
+    func sectionColumns() {
+        let sheet = css(.init(layout: .columns))
+        // A row of boxes, not a flow.
+        #expect(sheet.contains("display: flex"))
+        #expect(sheet.contains("flex-direction: row"))
+        #expect(!sheet.contains("column-count"))
+        // A section taller than the screen scrolls inside its own box
+        // rather than spilling into the next one.
+        let column = sheet.components(separatedBy: ".origami-column {").last?
+            .components(separatedBy: "}").first ?? ""
+        #expect(column.contains("overflow-y: auto"))
+        #expect(column.contains("height: 100%"))
+        #expect(column.contains("flex: 0 0"))
+        // Moved by transform like the other paged reading.
+        #expect(sheet.contains("transition: transform"))
+
+        // Horizontal is still a flow, and keeps its columns.
+        let flowing = css(.init(layout: .horizontal, horizontalScroller: .viewport))
+        #expect(!flowing.contains("display: flex"))
+        #expect(flowing.contains("column-count: 2"))
+        // And no other layout grows section boxes.
+        for layout in EPUBReadingLayout.allCases where layout != .columns {
+            #expect(!css(.init(layout: layout)).contains(".origami-column"))
+        }
+    }
+
+    @Test("Columns and Horizontal are both paged; only Columns is sectioned")
+    func layoutKinds() {
+        #expect(EPUBReadingLayout.columns.isPaged)
+        #expect(EPUBReadingLayout.horizontal.isPaged)
+        #expect(EPUBReadingLayout.columns.isSectioned)
+        #expect(!EPUBReadingLayout.horizontal.isSectioned)
+        #expect(!EPUBReadingLayout.scrolling.isPaged)
+        #expect(EPUBReadingLayout.columns.displayName == "Columns")
+    }
+
+    @Test("Sections are gathered by moving nodes, never by rewriting them")
+    func sectionGrouping() {
+        let script = EPUBReadingStyle.sectionColumnsScript
+        // A box per heading…
+        #expect(script.contains("/^H[1-6]$/"))
+        #expect(script.contains("class = 'origami-column'") || script.contains("className = 'origami-column'"))
+        // …opened only when the box so far has something of its own, so a
+        // bare part title joins the next section instead of taking a column.
+        #expect(script.contains("currentHasBody"))
+        // Nodes are appended, not re-created: ids, data-ids and anchors
+        // survive, so an annotation anchored to a data-id is not orphaned.
+        #expect(script.contains("appendChild(node)"))
+        #expect(!script.contains("innerHTML"))
+        // Injected twice over one page must not gather twice.
+        #expect(script.contains("origamiSectioned === 'yes'"))
+    }
+
+    @Test("The pager asks a section column how wide it is")
+    func pagerMeasuresSectionColumns() {
+        let script = EPUBReadingStyle.columnPagingScript
+        // The width comes from a min() in the stylesheet, which only the
+        // page can resolve — so it is measured, not derived.
+        #expect(script.contains("origamiColumns === 'sections'"))
+        #expect(script.contains("getElementsByClassName('origami-column')"))
+        #expect(script.contains("getBoundingClientRect().width"))
+        // The last index still leaves the view full.
+        #expect(script.contains("boxes.length - visible"))
+    }
+
     @Test("A swipe steps one column, and only when it means to")
     func swipeIntent() {
         let script = EPUBReadingStyle.columnPagingScript

@@ -120,8 +120,15 @@ public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, S
     case scrolling
     /// The full window width, no column margins.
     case fullWidth
-    /// Pages side by side — two, or more when the window is wide.
+    /// Pages side by side — two, or more when the window is wide, with the
+    /// text flowing on from one into the next.
     case horizontal
+    /// A column for each of the book's sections, side by side: the column
+    /// begins at its heading and holds that section and nothing else, and a
+    /// section longer than the screen is scrolled within its own column.
+    /// Origami Text's reading — what it shows is the shape of the argument
+    /// rather than a continuous ribbon of prose.
+    case columns
     /// The reading alone: no rail, no foot, a narrow measure.
     case focus
 
@@ -132,6 +139,7 @@ public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, S
         case .scrolling:  "Scrolling"
         case .fullWidth:  "Full Width"
         case .horizontal: "Horizontal"
+        case .columns:    "Columns"
         case .focus:      "Focus"
         }
     }
@@ -140,7 +148,8 @@ public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, S
         switch self {
         case .scrolling:  "The book's own pages, down a comfortable column"
         case .fullWidth:  "The full window width — no column margins"
-        case .horizontal: "Pages side by side — two, or more when the window is wide"
+        case .horizontal: "Pages side by side, the text flowing on from one to the next"
+        case .columns:    "A column for each section, scrolled within itself"
         case .focus:      "The reading alone, with nothing else on screen"
         }
     }
@@ -150,12 +159,17 @@ public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, S
         case .scrolling:  "scroll"
         case .fullWidth:  "rectangle.expand.vertical"
         case .horizontal: "book.pages"
+        case .columns:    "rectangle.split.3x1"
         case .focus:      "rectangle.center.inset.filled"
         }
     }
 
     /// Whether the reader turns pages sideways rather than scrolling down.
-    public var isPaged: Bool { self == .horizontal }
+    public var isPaged: Bool { self == .horizontal || self == .columns }
+
+    /// Whether each column is one of the book's own sections, rather than
+    /// the next stretch of a continuous flow.
+    public var isSectioned: Bool { self == .columns }
 }
 
 /// The faces a reading can be set in. A book's own font is kept where the

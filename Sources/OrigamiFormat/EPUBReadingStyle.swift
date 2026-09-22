@@ -147,6 +147,26 @@ public nonisolated enum EPUBReadingStyle {
         pre, code { white-space: pre-wrap; word-wrap: break-word; }
         pre { background: \(block) !important; padding: 0.8em; border-radius: 6px; }
         \(spread(settings))
+        \(sectionColumns(settings))
+        """
+    }
+
+    /// The section columns' own rules: how wide a column is, and that it
+    /// scrolls within itself rather than overflowing into its neighbour.
+    private static func sectionColumns(_ settings: Settings) -> String {
+        guard settings.layout == .columns else { return "" }
+        return """
+        .origami-column {
+          flex: 0 0 min(34em, 88vw);
+          height: 100%;
+          overflow-y: auto;
+          overflow-x: hidden;
+          box-sizing: border-box;
+          padding: 2.5em 2em;
+          border-right: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+          -webkit-overflow-scrolling: touch;
+        }
+        .origami-column > :first-child { margin-top: 0; }
         """
     }
 
@@ -187,6 +207,26 @@ public nonisolated enum EPUBReadingStyle {
             max-width: 30em;
                     margin: 0 auto;
                     padding: 5em 1.5em 8em;
+            """
+        case .columns:
+            // Not a flow. Each of the book's sections is its own box, laid
+            // out in a row, and a section taller than the screen scrolls
+            // inside its own box rather than spilling into the next one.
+            // Origami Text's reading: what you see is the shape of the
+            // argument, one section at a time, not a ribbon of prose cut
+            // into screen-sized pieces.
+            return """
+            max-width: none;
+                    margin: 0;
+                    padding: 0;
+                    height: 100%;
+                    box-sizing: border-box;
+                    display: flex;
+                    flex-direction: row;
+                    align-items: stretch;
+                    transform: translateX(0px);
+                    transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+                    will-change: transform;
             """
         case .horizontal:
             // Pages side by side: the text is cut into columns as wide as a
@@ -405,6 +445,60 @@ public nonisolated enum EPUBReadingStyle {
 
     /// Turning a page in Horizontal: the window scrolls by its own width,
     /// which is exactly one screenful of columns.
+    /// Gathers the book's content into one box per section, so each can be
+    /// a column of its own.
+    ///
+    /// A book's markup is rarely already divided this way: some are a flat
+    /// run of `h2`, `p`, `p`, `h2`, … and only an Origami EPUB reliably
+    /// wraps its sections. So the boxes are made here, at each heading.
+    ///
+    /// **Nothing is rewritten** — the nodes are moved into wrappers, not
+    /// re-created, so text, ids, `data-id`s, anchors and event handlers all
+    /// survive and a copy still yields the book's own words. That matters
+    /// for more than tidiness: an annotation anchors to a `data-id`, and an
+    /// id that changed under a reading would orphan every note on it.
+    ///
+    /// A heading with nothing of its own — a part title followed straight
+    /// away by a subheading — joins the next box rather than taking a
+    /// column to say one line. Origami Text does the same, and for the same
+    /// reason: a column should be worth turning to.
+    public static let sectionColumnsScript = """
+    (function() {
+      var body = document.body;
+      if (body.dataset.origamiSectioned === 'yes') { return; }
+
+      var heading = /^H[1-6]$/;
+      var nodes = Array.prototype.slice.call(body.childNodes);
+      var boxes = [];
+      var current = null;
+      var currentHasBody = false;
+
+      function open() {
+        current = document.createElement('div');
+        current.className = 'origami-column';
+        currentHasBody = false;
+        boxes.push(current);
+      }
+
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        // Whitespace between elements belongs to nothing.
+        if (node.nodeType === 3 && !node.textContent.trim()) { continue; }
+        var isHeading = node.nodeType === 1 && heading.test(node.tagName);
+        // A new box at each heading — unless the box so far is only
+        // headings, in which case this one joins them.
+        if (isHeading && (current === null || currentHasBody)) { open(); }
+        if (current === null) { open(); }
+        current.appendChild(node);
+        if (!isHeading) { currentHasBody = true; }
+      }
+
+      for (var j = 0; j < boxes.length; j++) { body.appendChild(boxes[j]); }
+      body.dataset.origamiSectioned = 'yes';
+      body.dataset.origamiColumns = 'sections';
+    })();
+    """
+
     /// Paging by column, done in the page: a swipe steps an index and the
     /// stylesheet's transition carries the columns across.
     ///
@@ -434,6 +528,17 @@ public nonisolated enum EPUBReadingStyle {
       function measure() {
         var body = document.body;
         var style = getComputedStyle(body);
+        if (body.dataset.origamiColumns === 'sections') {
+          // Section columns are real boxes, so ask one how wide it is
+          // rather than deriving it — its width comes from a min() in the
+          // stylesheet, which only the page can resolve.
+          var boxes = body.getElementsByClassName('origami-column');
+          if (!boxes.length) { pitch = body.clientWidth; last = 0; return; }
+          pitch = boxes[0].getBoundingClientRect().width;
+          var visible = pitch > 0 ? Math.max(1, Math.floor(body.clientWidth / pitch)) : 1;
+          last = Math.max(0, boxes.length - visible);
+          return;
+        }
         var count = parseInt(style.columnCount) || 1;
         var gap = parseFloat(style.columnGap) || 0;
         if (!isFinite(gap)) { gap = 0; }
