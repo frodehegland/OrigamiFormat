@@ -72,6 +72,24 @@ struct EPUBReadingStyleTests {
         #expect(css(.init(lineSpacing: 0.1)).contains("line-height: 1.10"))
     }
 
+    @Test("Links read in the body's ink, not in blue")
+    func linksAreNotBlue() {
+        // A scholarly page is dense with links — references, glossary
+        // terms, cross-references — and in blue it becomes a map of the
+        // markup rather than a reading.
+        for dark in [false, true] {
+            let sheet = css(.init(dark: dark))
+            let ink = EPUBReadingTheme.system.inkHex(dark: dark)
+            #expect(sheet.contains("a, a:visited { color: \(ink); }"))
+        }
+        // No blue anywhere in the stylesheet any more.
+        #expect(!css(.init()).contains("#0a58c2"))
+        #expect(!css(.init(dark: true)).contains("#7fb6ff"))
+        // A theme's own ink is used where a theme sets one.
+        let sepia = css(.init(theme: .sepia))
+        #expect(sepia.contains("a, a:visited { color: \(EPUBReadingTheme.sepia.inkHex(dark: false)); }"))
+    }
+
     @Test("Each layout sets the measure it promises")
     func layouts() {
         // Full Width is gone: it offered the same reading as Scroll with

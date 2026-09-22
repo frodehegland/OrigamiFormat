@@ -91,7 +91,6 @@ public nonisolated enum EPUBReadingStyle {
         let dark = settings.readsDark
         let quiet = dark ? "#a7a49f" : "#5b5f66"
         let rule = dark ? "#3a3c3f" : "#dcd9d4"
-        let link = dark ? "#7fb6ff" : "#0a58c2"
         let block = dark ? "#141517" : "#f1efec"
         let size = String(format: "%.1f", 17 * max(0.5, settings.scale))
         let leading = String(format: "%.2f", max(1.1, settings.lineSpacing))
@@ -141,7 +140,13 @@ public nonisolated enum EPUBReadingStyle {
         }
         \(clearBookBackgrounds)
         h1, h2, h3, h4, h5, h6 { color: \(ink); line-height: 1.25; \(headingFamily) }
-        a, a:visited { color: \(link); }
+        /* Links and citations read in the body's own ink. A scholarly
+           page is dense with them — every reference, every glossary term,
+           every cross-reference — and in blue the page turns into a
+           thicket of blue, which is a map of the markup rather than a
+           reading of the argument. They keep their underline, so a reader
+           can still find them; only the colour goes. */
+        a, a:visited { color: \(ink); }
         blockquote {
             margin: 1.2em 0;
             padding-left: 1em;
