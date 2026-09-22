@@ -74,8 +74,21 @@ struct EPUBReadingStyleTests {
 
     @Test("Each layout sets the measure it promises")
     func layouts() {
-        #expect(css(.init(layout: .scrolling)).contains("max-width: 34em"))
-        #expect(css(.init(layout: .fullWidth)).contains("max-width: none"))
+        // Full Width is gone: it offered the same reading as Scroll with
+        // the margins taken off, which is a setting rather than a way of
+        // reading. Scroll is the one vertical reading, and it is the one
+        // that uses the screen.
+        #expect(EPUBReadingLayout.allCases.count == 4)
+        #expect(EPUBReadingLayout.scrolling.displayName == "Scroll")
+        #expect(EPUBReadingLayout(rawValue: "fullWidth") == nil)
+        let scroll = css(.init(layout: .scrolling))
+        #expect(scroll.contains("max-width: none"))
+        // A small margin either side, and equal — 2em each.
+        #expect(scroll.contains("padding: 2.5em 2em 5em"))
+        #expect(!scroll.contains("margin: 0 auto"))
+        // Focus keeps its narrow measure: that reading is the words alone,
+        // and a line the width of a display is not that.
+        #expect(css(.init(layout: .focus)).contains("max-width: 30em"))
         #expect(css(.init(layout: .focus)).contains("max-width: 30em"))
 
         // Horizontal is pages side by side: columns a measure wide, a page

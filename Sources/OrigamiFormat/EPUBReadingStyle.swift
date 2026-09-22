@@ -230,16 +230,21 @@ public nonisolated enum EPUBReadingStyle {
     private static func measure(_ settings: Settings) -> String {
         switch settings.layout {
         case .scrolling:
-            return """
-            max-width: 34em;
-                    margin: 0 auto;
-                    padding: 3em 1.5em 6em;
-            """
-        case .fullWidth:
+            // The width, with a small margin either side. Scroll used to be
+            // a centred 34em column with Full Width standing beside it to
+            // take the margins off — which made a setting into a way of
+            // reading. With one vertical reading left, it is the one that
+            // uses the screen: a reader who wants a narrower measure has a
+            // window to narrow, and on a phone there was never room for the
+            // empty space anyway.
+            //
+            // The foot is 2em clear at the bottom so the last line is not
+            // under it, and the top has a little more than the sides so the
+            // first line is not against the edge.
             return """
             max-width: none;
                     margin: 0;
-                    padding: 2.5em 3em 5em;
+                    padding: 2.5em 2em 5em;
             """
         case .focus:
             // Nothing else on screen, so the column can be narrower and the

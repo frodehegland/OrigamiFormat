@@ -116,10 +116,10 @@ public nonisolated enum EPUBReadingTheme: String, CaseIterable, Identifiable, Se
 /// How the book is laid out — Origami Text's reading modes, in the terms a
 /// WebView rendering can honour.
 public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, Sendable {
-    /// The book's own pages down a column of comfortable measure.
+    /// The book's own pages, read down. The one vertical reading — Full
+    /// Width used to stand beside it, offering the same reading with the
+    /// margins taken off, which is a setting rather than a way of reading.
     case scrolling
-    /// The full window width, no column margins.
-    case fullWidth
     /// Pages side by side — two, or more when the window is wide, with the
     /// text flowing on from one into the next.
     case horizontal
@@ -136,8 +136,7 @@ public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, S
 
     public var displayName: String {
         switch self {
-        case .scrolling:  "Scrolling"
-        case .fullWidth:  "Full Width"
+        case .scrolling:  "Scroll"
         case .horizontal: "Horizontal"
         case .columns:    "Columns"
         case .focus:      "Focus"
@@ -146,8 +145,7 @@ public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, S
 
     public var help: String {
         switch self {
-        case .scrolling:  "The book's own pages, down a comfortable column"
-        case .fullWidth:  "The full window width — no column margins"
+        case .scrolling:  "The book's own pages, read down"
         case .horizontal: "Pages side by side, the text flowing on from one to the next"
         case .columns:    "A column for each section, scrolled within itself"
         case .focus:      "The reading alone, with nothing else on screen"
@@ -157,7 +155,6 @@ public nonisolated enum EPUBReadingLayout: String, CaseIterable, Identifiable, S
     public var systemImage: String {
         switch self {
         case .scrolling:  "scroll"
-        case .fullWidth:  "rectangle.expand.vertical"
         case .horizontal: "book.pages"
         case .columns:    "rectangle.split.3x1"
         case .focus:      "rectangle.center.inset.filled"
