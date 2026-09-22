@@ -352,6 +352,21 @@ struct EPUBReadingStyleTests {
         #expect(EPUBReadingStyle.columnPagingScript.contains("__origamiRemeasure"))
     }
 
+    @Test("Leaving a paged reading puts the body back")
+    func clearingThePaging() {
+        let script = EPUBReadingStyle.columnPagingScript
+        // The transform is an inline style, so it outlives the stylesheet
+        // that asked for it. Without this, paging to column five and then
+        // choosing Scroll left the reading a thousand points to the left.
+        #expect(script.contains("__origamiClearPaging"))
+        #expect(script.contains("body.style.transform = ''"))
+        #expect(script.contains("removeProperty('--origami-columns')"))
+        // Unanimated, so it is a cut rather than a slide back across the
+        // book the reader has just left.
+        let clearing = script.components(separatedBy: "__origamiClearPaging").last ?? ""
+        #expect(clearing.contains("transition = 'none'"))
+    }
+
     @Test("The pager asks a section column how wide it is")
     func pagerMeasuresSectionColumns() {
         let script = EPUBReadingStyle.columnPagingScript

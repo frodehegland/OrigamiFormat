@@ -798,6 +798,25 @@ public nonisolated enum EPUBReadingStyle {
         });
       }
 
+      // Leaving a paged reading has to put the body back where it was.
+      // The transform is an *inline* style, so it outlives the stylesheet
+      // that asked for it: page to column five, switch to Scroll, and the
+      // reading stays translated a thousand points to the left with
+      // nothing to say why. Scroll and Focus were both "way off to the
+      // left" for exactly this reason.
+      window.__origamiClearPaging = function() {
+        index = 0;
+        var body = document.body;
+        body.style.transition = 'none';
+        body.style.transform = '';
+        body.style.removeProperty('--origami-columns');
+        void body.offsetWidth;
+        body.style.transition = '';
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'paging', index: 0, last: 0, pitch: 0, shown: 1
+        });
+      };
+
       window.__origamiRemeasure = function() {
         measure();
         if (index > last) { index = last; }
