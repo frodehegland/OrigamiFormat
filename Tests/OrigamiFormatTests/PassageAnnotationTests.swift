@@ -102,5 +102,19 @@ struct PassageAnnotationTests {
         // Context either side, so a note re-anchors when an id changes.
         #expect(script.contains("payload.before"))
         #expect(script.contains("payload.after"))
+        // A selection says it is one, so a tap can say it is not.
+        #expect(script.contains("kind: 'selection'"))
+    }
+
+    @Test("A plain tap is reported, so a bare reading can be brought back")
+    func tapBridge() {
+        let script = EPUBReadingStyle.selectionBridgeScript
+        #expect(script.contains("kind: 'tap'"))
+        // From inside the page, because the web view eats touches and a
+        // gesture on the view around it never fires.
+        #expect(script.contains("addEventListener('click'"))
+        // Following a link is not a tap, and neither is selecting words.
+        #expect(script.contains("closest('a')"))
+        #expect(script.contains("String(selection).trim()"))
     }
 }

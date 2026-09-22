@@ -339,7 +339,8 @@ public nonisolated enum EPUBReadingStyle {
       function report() {
         var selection = window.getSelection();
         var text = selection ? String(selection) : '';
-        var payload = { text: text.trim(), unit: null, before: null, after: null };
+        var payload = { kind: 'selection', text: text.trim(),
+                        unit: null, before: null, after: null };
         if (payload.text && selection.rangeCount) {
           var range = selection.getRangeAt(0);
           payload.unit = unitOf(range.startContainer);
@@ -354,6 +355,22 @@ public nonisolated enum EPUBReadingStyle {
       document.addEventListener('selectionchange', report);
       document.addEventListener('mouseup', report);
       document.addEventListener('keyup', report);
+
+      // A plain tap on the page, reported so a reading with its chrome
+      // hidden can bring it back. This has to come from inside the page:
+      // the web view consumes touches, so a tap gesture on the view around
+      // it never fires — which is why a hover reveal alone left a
+      // touch-only reader with no way back out of a bare reading.
+      //
+      // A tap that is really something else is not one: following a link,
+      // or finishing a selection, is the reader doing that instead.
+      document.addEventListener('click', function(event) {
+        var target = event.target;
+        if (target && target.closest && target.closest('a')) { return; }
+        var selection = window.getSelection();
+        if (selection && String(selection).trim()) { return; }
+        window.webkit.messageHandlers.reader.postMessage({ kind: 'tap' });
+      });
     })();
     """
 
