@@ -148,6 +148,21 @@ public nonisolated enum EPUBReadingStyle {
         td, th { border: 1px solid \(rule); padding: 0.3em 0.5em; }
         pre, code { white-space: pre-wrap; word-wrap: break-word; }
         pre { background: \(block) !important; padding: 0.8em; border-radius: 6px; }
+        \(spread(settings))
+        """
+    }
+
+    /// Two pages side by side, on a screen wide enough for them.
+    ///
+    /// Only where the viewport scrolls — on macOS the reader sizes the
+    /// window and `column-width` should keep answering to it.
+    private static func spread(_ settings: Settings) -> String {
+        guard settings.layout == .horizontal,
+              settings.horizontalScroller == .viewport else { return "" }
+        return """
+        @media (min-width: 700px) {
+          body { column-count: 2; column-width: auto; }
+        }
         """
     }
 
@@ -200,6 +215,13 @@ public nonisolated enum EPUBReadingStyle {
                         overflow-y: hidden;
                 """
             case .viewport:
+                // A tablet in Horizontal reads as a book: two pages side by
+                // side, stated as a count rather than left to a measure.
+                // `column-width` on a 744pt iPad mini gives one column and
+                // on a 1133pt one gives two, so the spread changed when the
+                // reader turned the device — which is not what a book does.
+                // Below tablet width one column stands, because two on a
+                // phone is two things too narrow to read.
                 return """
                 max-width: none;
                         margin: 0;
@@ -376,6 +398,37 @@ public nonisolated enum EPUBReadingStyle {
 
     /// Turning a page in Horizontal: the window scrolls by its own width,
     /// which is exactly one screenful of columns.
+    /// What one column measures, end to end — its width plus the gap after
+    /// it — reported from the page and again whenever the page is resized.
+    ///
+    /// The app cannot work this out: the column count comes from a media
+    /// query, the gap from the stylesheet and the padding from the reading,
+    /// and only the page knows what they all resolved to. Without it a
+    /// swipe can only snap to whole screenfuls.
+    public static let columnMetricsScript = """
+    (function() {
+      function report() {
+        var body = document.body;
+        var style = getComputedStyle(body);
+        var count = parseInt(style.columnCount) || 1;
+        var gap = parseFloat(style.columnGap) || 0;
+        if (!isFinite(gap)) { gap = 0; }
+        var inner = body.clientWidth
+          - (parseFloat(style.paddingLeft) || 0)
+          - (parseFloat(style.paddingRight) || 0);
+        var width = count > 0 ? (inner - gap * (count - 1)) / count : inner;
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'metrics',
+          pitch: width + gap,
+          columns: count
+        });
+      }
+      report();
+      window.addEventListener('resize', report);
+      document.addEventListener('DOMContentLoaded', report);
+    })();
+    """
+
     /// Turning a page in Horizontal: one screenful of columns sideways.
     ///
     /// Which element to move is decided at run time rather than assumed,

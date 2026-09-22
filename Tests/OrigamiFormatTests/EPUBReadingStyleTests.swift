@@ -110,6 +110,41 @@ struct EPUBReadingStyleTests {
         #expect(html.contains("overflow-y: hidden"))
     }
 
+    @Test("A tablet in Horizontal reads as a book: two pages side by side")
+    func spreadOfTwo() {
+        let viewport = css(.init(layout: .horizontal, horizontalScroller: .viewport))
+        #expect(viewport.contains("@media (min-width: 700px)"))
+        #expect(viewport.contains("column-count: 2"))
+        // The measure is overridden, or the count would not win.
+        #expect(viewport.contains("column-width: auto"))
+
+        // macOS sizes its own window, so the measure keeps answering to it.
+        let body = css(.init(layout: .horizontal, horizontalScroller: .body))
+        #expect(!body.contains("column-count"))
+
+        // And no other layout is a spread.
+        for layout in EPUBReadingLayout.allCases where layout != .horizontal {
+            #expect(!css(.init(layout: layout, horizontalScroller: .viewport))
+                .contains("column-count"))
+        }
+    }
+
+    @Test("The page reports what one column measures, and again when resized")
+    func columnMetrics() {
+        let script = EPUBReadingStyle.columnMetricsScript
+        // The pitch is a column plus the gap after it — what a swipe of one
+        // column has to move by.
+        #expect(script.contains("pitch: width + gap"))
+        #expect(script.contains("kind: 'metrics'"))
+        // Read from the page, because only the page knows what the media
+        // query, the stylesheet and the reading's padding resolved to.
+        #expect(script.contains("style.columnCount"))
+        #expect(script.contains("style.columnGap"))
+        #expect(script.contains("paddingLeft"))
+        // Rotating the iPad changes all of it.
+        #expect(script.contains("addEventListener('resize'"))
+    }
+
     @Test("Only Horizontal touches the viewport's overflow")
     func otherLayoutsLeaveTheViewportAlone() {
         for layout in EPUBReadingLayout.allCases where layout != .horizontal {
