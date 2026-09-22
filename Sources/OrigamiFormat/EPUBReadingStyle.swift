@@ -471,6 +471,86 @@ public nonisolated enum EPUBReadingStyle {
 
     /// Turning a page in Horizontal: the window scrolls by its own width,
     /// which is exactly one screenful of columns.
+    /// Reports a tap on a citation, with the reference the book itself
+    /// prints for it.
+    ///
+    /// Every shape a package may carry is recognised, because they disagree:
+    /// Origami Text's exports mark a citation with `class="citation"` and a
+    /// `data-citation-id`; Author writes `data-citation-key`; the EPUB and
+    /// ARIA vocabularies use `epub:type="biblioref"` and
+    /// `role="doc-biblioref"`; and an ordinary book often has nothing but an
+    /// `<a href="#bib-12">`. A reader tapping `[12]` means the same thing in
+    /// all of them.
+    ///
+    /// The reference text is read **here**, in the page, rather than asked
+    /// for afterwards: the anchor's href names an element in this document,
+    /// and following it is a DOM lookup the app would otherwise have to ask
+    /// for over the bridge and wait for. So the card can show the book's own
+    /// words at once, and only the *live* part — what the world knows about
+    /// the work now — has to be waited for.
+    ///
+    /// The default action is suppressed, because a citation that jumps the
+    /// reading to the backmatter has lost the reader their place; the card
+    /// brings the reference to them instead.
+    public static let citationBridgeScript = """
+    (function() {
+      function isCitation(a) {
+        if (!a || a.tagName !== 'A') { return false; }
+        if (a.classList && a.classList.contains('citation')) { return true; }
+        if (a.getAttribute('data-citation-id')) { return true; }
+        if (a.getAttribute('data-citation-key')) { return true; }
+        var role = a.getAttribute('role') || '';
+        if (role.indexOf('doc-biblioref') >= 0) { return true; }
+        if (role.indexOf('doc-noteref') >= 0) { return true; }
+        var kind = a.getAttribute('epub:type')
+          || a.getAttributeNS('http://www.idpf.org/2007/ops', 'type') || '';
+        if (kind.indexOf('biblioref') >= 0) { return true; }
+        if (kind.indexOf('noteref') >= 0) { return true; }
+        return false;
+      }
+
+      // What the book prints for this citation: the element its href names.
+      // A list item, a paragraph, a table row — whatever the backmatter is
+      // made of, its text is the reference.
+      function referenceText(a) {
+        var href = a.getAttribute('href') || '';
+        var hash = href.indexOf('#');
+        if (hash < 0) { return ''; }
+        var id = decodeURIComponent(href.slice(hash + 1));
+        if (!id) { return ''; }
+        var target = document.getElementById(id);
+        if (!target) { return ''; }
+        // An anchor sitting inside its entry names the entry, not itself.
+        if (target.tagName === 'A' || !(target.textContent || '').trim()) {
+          target = target.parentElement || target;
+        }
+        return (target.textContent || '').replace(/\\s+/g, ' ').trim();
+      }
+
+      document.addEventListener('click', function(event) {
+        var anchor = event.target.closest ? event.target.closest('a') : null;
+        if (!isCitation(anchor)) { return; }
+        // The reading keeps its place; the reference comes to the reader.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        var href = anchor.getAttribute('href') || '';
+        var text = referenceText(anchor);
+        var doi = (text.match(/10\\.\\d{4,9}\\/[^\\s"'<>&]+/) || [''])[0]
+          .replace(/[.,;:)\\]}>]+$/, '');
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'citation',
+          key: anchor.getAttribute('data-citation-id')
+            || anchor.getAttribute('data-citation-key')
+            || href.replace(/^.*#/, ''),
+          label: (anchor.textContent || '').trim(),
+          href: href,
+          text: text,
+          doi: doi
+        });
+      }, true);
+    })();
+    """
+
     /// Gathers the book's content into one box per section, so each can be
     /// a column of its own.
     ///
