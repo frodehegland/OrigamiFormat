@@ -203,6 +203,38 @@ struct EPUBReadingStyleTests {
         }
     }
 
+    @Test("Every paged reading is clipped and sized by html, on every platform")
+    func pagedReadingsAreClipped() {
+        // The fault this guards: with no height on html, `body { height:
+        // 100% }` resolved against auto and the flex row had nothing to
+        // stretch to, so the columns grew to their content rather than the
+        // screen — and with nothing clipping, the document scrolled
+        // sideways and the transform slid the reading off to the left.
+        func html(_ settings: EPUBReadingStyle.Settings) -> String {
+            EPUBReadingStyle.css(settings)
+                .components(separatedBy: "html {").last?
+                .components(separatedBy: "}").first ?? ""
+        }
+        // Columns is paged on both platforms: its columns are real boxes,
+        // so there was never a body-overflow question to answer.
+        for scroller in EPUBReadingStyle.HorizontalScroller.allCases {
+            let sheet = html(.init(layout: .columns, horizontalScroller: scroller))
+            #expect(sheet.contains("height: 100%"), "columns/\(scroller.rawValue)")
+            #expect(sheet.contains("overflow: hidden"), "columns/\(scroller.rawValue)")
+        }
+        // Horizontal only where the viewport is the scroller; where the
+        // body scrolls, html must stay out of the way.
+        #expect(html(.init(layout: .horizontal, horizontalScroller: .viewport))
+            .contains("overflow: hidden"))
+        #expect(!html(.init(layout: .horizontal, horizontalScroller: .body))
+            .contains("overflow: hidden"))
+        // And an unpaged reading is never clipped, or it could not scroll.
+        for layout in EPUBReadingLayout.allCases where !layout.isPaged {
+            #expect(!html(.init(layout: layout)).contains("overflow: hidden"),
+                    "\(layout.rawValue)")
+        }
+    }
+
     @Test("Columns and Horizontal are both paged; only Columns is sectioned")
     func layoutKinds() {
         #expect(EPUBReadingLayout.columns.isPaged)

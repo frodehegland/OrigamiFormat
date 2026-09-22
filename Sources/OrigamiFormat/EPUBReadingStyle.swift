@@ -101,11 +101,20 @@ public nonisolated enum EPUBReadingStyle {
         let bodyFamily = settings.bodyFont.cssFamily.map { "font-family: \($0);" } ?? ""
         let headingFamily = settings.headingFont.cssFamily.map { "font-family: \($0);" } ?? ""
 
-        // Where the viewport is the sideways scroller, `html` is what
-        // carries the overflow and the definite height the columns measure
-        // themselves against.
-        let viewport = settings.layout == .horizontal
-            && settings.horizontalScroller == .viewport
+        // Where the reading is paged by transform, `html` is the window
+        // onto it: it clips, and it gives the definite height the columns
+        // measure themselves against.
+        //
+        // Both paged readings need this, and Columns needs it on every
+        // platform — its columns are real boxes, so there was never a
+        // body-overflow question for the scroller to answer. Leaving it to
+        // Horizontal alone was a real fault: `body { height: 100% }`
+        // resolved against an auto-height `html`, so the flex row had no
+        // height to stretch to and the columns grew to their content
+        // instead of the screen; and with nothing clipping, the document
+        // itself scrolled sideways, so the transform slid the whole reading
+        // off to the left.
+        let viewport = paged(settings)
             ? """
 
             height: 100%;
@@ -149,6 +158,14 @@ public nonisolated enum EPUBReadingStyle {
         \(spread(settings))
         \(sectionColumns(settings))
         """
+    }
+
+    /// Whether this reading is carried by a transform, so `html` must clip
+    /// it and give it a height.
+    static func paged(_ settings: Settings) -> Bool {
+        settings.layout.isSectioned
+            || (settings.layout == .horizontal
+                && settings.horizontalScroller == .viewport)
     }
 
     /// The section columns' own rules: how wide a column is, and that it
