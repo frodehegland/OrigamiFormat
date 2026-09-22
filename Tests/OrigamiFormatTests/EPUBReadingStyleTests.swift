@@ -253,13 +253,70 @@ struct EPUBReadingStyleTests {
         #expect(script.contains("class = 'origami-column'") || script.contains("className = 'origami-column'"))
         // …opened only when the box so far has something of its own, so a
         // bare part title joins the next section instead of taking a column.
-        #expect(script.contains("currentHasBody"))
+        #expect(script.contains("hasBody"))
         // Nodes are appended, not re-created: ids, data-ids and anchors
         // survive, so an annotation anchored to a data-id is not orphaned.
         #expect(script.contains("appendChild(node)"))
         #expect(!script.contains("innerHTML"))
         // Injected twice over one page must not gather twice.
         #expect(script.contains("origamiSectioned === 'yes'"))
+    }
+
+    @Test("A book's own sections become the columns, not one box for the lot")
+    func sectionsAreFound() {
+        let script = EPUBReadingStyle.sectionColumnsScript
+        // The fault this guards: an Origami EPUB puts its headings inside
+        // <section> elements, so no child of body was ever a heading, no
+        // second box was ever opened, and the whole chapter became one
+        // column — the only one with a heading, and the only one that
+        // scrolled.
+        #expect(script.contains("tagName === 'SECTION'"))
+        #expect(script.contains("sections.length > 1"))
+        // Descending to where the flow really is, for a book that wraps it.
+        #expect(script.contains("origami-passthrough"))
+        // A marked section keeps its id and everything anchored to it; a
+        // wrapper would be a second element to get wrong.
+        #expect(script.contains("origamiClassed"))
+        // Anything before the first section is a column of its own.
+        #expect(script.contains("lead.appendChild(child)"))
+    }
+
+    @Test("Leaving Columns gives the book back")
+    func groupingIsReversible() {
+        let script = EPUBReadingStyle.sectionColumnsScript
+        // A layout change restates the stylesheet without reloading, so a
+        // grouping left standing would break every other reading.
+        #expect(script.contains("__origamiUngroupSections"))
+        // A box this script made gives its children back and goes…
+        #expect(script.contains("insertBefore(element.firstChild, element)"))
+        #expect(script.contains("removeChild(element)"))
+        // …and a section of the book's own is only unclassed.
+        #expect(script.contains("classList.remove('origami-column')"))
+        #expect(script.contains("classList.remove('origami-passthrough')"))
+        // Grouping is asked for by the app, but also happens at load when
+        // the stylesheet already says Columns.
+        #expect(script.contains("getComputedStyle(document.body).display === 'flex'"))
+    }
+
+    @Test("Every column keeps its own heading in view while it scrolls")
+    func stickyHeadings() {
+        let sheet = css(.init(layout: .columns))
+        #expect(sheet.contains("position: sticky"))
+        // Each column's own first heading, not merely the first in the book.
+        #expect(sheet.contains(".origami-column > h2:first-child"))
+        // On the paper, so the section's text does not read through it.
+        let sticky = sheet.components(separatedBy: "position: sticky").last ?? ""
+        #expect(sticky.contains("background:"))
+        // And no other reading sticks anything.
+        for layout in EPUBReadingLayout.allCases where layout != .columns {
+            #expect(!css(.init(layout: layout)).contains("position: sticky"),
+                    "\(layout.rawValue)")
+        }
+    }
+
+    @Test("The pager can be told to measure again after the DOM changes")
+    func remeasure() {
+        #expect(EPUBReadingStyle.columnPagingScript.contains("__origamiRemeasure"))
     }
 
     @Test("The pager asks a section column how wide it is")

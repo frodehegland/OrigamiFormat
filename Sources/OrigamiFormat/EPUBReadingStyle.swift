@@ -184,6 +184,30 @@ public nonisolated enum EPUBReadingStyle {
           -webkit-overflow-scrolling: touch;
         }
         .origami-column > :first-child { margin-top: 0; }
+        /* Each column keeps its own heading in view while its section is
+           scrolled, so a reader who has scrolled down three screens still
+           knows which section they are in. Without this only the first
+           column was ever labelled, because only the first heading stayed
+           on screen. */
+        .origami-column > h1:first-child,
+        .origami-column > h2:first-child,
+        .origami-column > h3:first-child,
+        .origami-column > h4:first-child,
+        .origami-column > h5:first-child,
+        .origami-column > h6:first-child {
+          position: sticky;
+          top: 0;
+          z-index: 2;
+          margin: 0 0 0.6em;
+          padding: 0.15em 0 0.35em;
+          background: \(paper);
+        }
+        /* The passthrough wrappers a book puts around its content take no
+           part in the row; their children are the columns. */
+        .origami-passthrough { display: contents; }
+        /* Separators between sections are spacing for a page that scrolls
+           down, and stray empty boxes in a row. */
+        .origami-passthrough > br, body > br { display: none; }
         /* Whole columns at every width, never a clipped one. A section
            cut off down its right edge reads as a fault rather than as an
            invitation to swipe — this is not a flow, so there is nothing
@@ -570,38 +594,128 @@ public nonisolated enum EPUBReadingStyle {
     /// reason: a column should be worth turning to.
     public static let sectionColumnsScript = """
     (function() {
-      var body = document.body;
-      if (body.dataset.origamiSectioned === 'yes') { return; }
+      if (window.__origamiSections) { return; }
+      window.__origamiSections = true;
 
       var heading = /^H[1-6]$/;
-      var nodes = Array.prototype.slice.call(body.childNodes);
-      var boxes = [];
-      var current = null;
-      var currentHasBody = false;
 
-      function open() {
-        current = document.createElement('div');
-        current.className = 'origami-column';
-        currentHasBody = false;
-        boxes.push(current);
+      // The element actually holding the flow. A book commonly wraps its
+      // content one or two levels down, and grouping `body`'s own children
+      // would then make a single box of the whole chapter — which is
+      // exactly what went wrong: an Origami EPUB puts its headings inside
+      // <section> elements, so no child of body was ever a heading and no
+      // second column was ever opened.
+      function flow() {
+        var node = document.body;
+        for (var depth = 0; depth < 6; depth++) {
+          if (node.children.length !== 1) { break; }
+          var only = node.children[0];
+          if (!only.querySelector) { break; }
+          if (!only.querySelector('h1,h2,h3,h4,h5,h6,p,section')) { break; }
+          only.classList.add('origami-passthrough');
+          node = only;
+        }
+        return node;
       }
 
-      for (var i = 0; i < nodes.length; i++) {
-        var node = nodes[i];
-        // Whitespace between elements belongs to nothing.
-        if (node.nodeType === 3 && !node.textContent.trim()) { continue; }
-        var isHeading = node.nodeType === 1 && heading.test(node.tagName);
-        // A new box at each heading — unless the box so far is only
-        // headings, in which case this one joins them.
-        if (isHeading && (current === null || currentHasBody)) { open(); }
-        if (current === null) { open(); }
-        current.appendChild(node);
-        if (!isHeading) { currentHasBody = true; }
+      function box() {
+        var made = document.createElement('div');
+        made.className = 'origami-column';
+        made.dataset.origamiWrapped = 'yes';
+        return made;
       }
 
-      for (var j = 0; j < boxes.length; j++) { body.appendChild(boxes[j]); }
-      body.dataset.origamiSectioned = 'yes';
-      body.dataset.origamiColumns = 'sections';
+      window.__origamiGroupSections = function() {
+        var root = flow();
+        if (root.dataset.origamiSectioned === 'yes') { return; }
+
+        var children = Array.prototype.slice.call(root.children);
+        var sections = children.filter(function(el) { return el.tagName === 'SECTION'; });
+        var boxes = [];
+
+        if (sections.length > 1) {
+          // The book already says where its sections are. Marking them
+          // keeps their ids, their data-ids and everything anchored to
+          // them — a wrapper would be a second element to get wrong.
+          var lead = null;
+          for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+            if (child.tagName === 'SECTION') {
+              child.classList.add('origami-column');
+              child.dataset.origamiClassed = 'yes';
+              boxes.push(child);
+              lead = null;
+            } else if (child.tagName === 'BR') {
+              continue;   // a separator between sections; the CSS hides it
+            } else {
+              // Anything before the first section — a title, a byline, an
+              // abstract table — is a column of its own.
+              if (lead === null) { lead = box(); boxes.push(lead); }
+              lead.appendChild(child);
+            }
+          }
+        } else {
+          // A flat book: h2, p, p, h2, … Group at each heading, and let a
+          // heading with nothing of its own join the next box rather than
+          // take a column to say one line.
+          var nodes = Array.prototype.slice.call(root.childNodes);
+          var current = null;
+          var hasBody = false;
+          for (var j = 0; j < nodes.length; j++) {
+            var node = nodes[j];
+            if (node.nodeType === 3 && !node.textContent.trim()) { continue; }
+            if (node.nodeType === 1 && node.tagName === 'BR') { continue; }
+            var isHeading = node.nodeType === 1 && heading.test(node.tagName);
+            if (isHeading && (current === null || hasBody)) {
+              current = box(); boxes.push(current); hasBody = false;
+            }
+            if (current === null) { current = box(); boxes.push(current); hasBody = false; }
+            current.appendChild(node);
+            if (!isHeading) { hasBody = true; }
+          }
+        }
+
+        // In document order, so the reading still reads forwards.
+        for (var k = 0; k < boxes.length; k++) { root.appendChild(boxes[k]); }
+        root.dataset.origamiSectioned = 'yes';
+        document.body.dataset.origamiColumns = 'sections';
+      };
+
+      // Leaving Columns has to give the book back. Switching layout only
+      // restates the stylesheet — it does not reload the page — so a
+      // grouping left standing would break every other reading.
+      window.__origamiUngroupSections = function() {
+        var root = flow();
+        var boxes = Array.prototype.slice.call(
+          document.getElementsByClassName('origami-column'));
+        for (var i = 0; i < boxes.length; i++) {
+          var element = boxes[i];
+          if (element.dataset.origamiWrapped === 'yes') {
+            // A box this script made: give its children back and go.
+            while (element.firstChild) {
+              element.parentNode.insertBefore(element.firstChild, element);
+            }
+            element.parentNode.removeChild(element);
+          } else {
+            // A section of the book's own: it was only ever classed.
+            element.classList.remove('origami-column');
+            delete element.dataset.origamiClassed;
+          }
+        }
+        var through = Array.prototype.slice.call(
+          document.getElementsByClassName('origami-passthrough'));
+        for (var j = 0; j < through.length; j++) {
+          through[j].classList.remove('origami-passthrough');
+        }
+        delete root.dataset.origamiSectioned;
+        delete document.body.dataset.origamiColumns;
+      };
+
+      // The stylesheet decides: Columns is the reading that lays the body
+      // out as a row, so the page can tell without being told.
+      if (getComputedStyle(document.body).display === 'flex') {
+        window.__origamiGroupSections();
+      }
     })();
     """
 
@@ -671,6 +785,12 @@ public nonisolated enum EPUBReadingStyle {
           kind: 'paging', index: index, last: last, pitch: pitch
         });
       }
+
+      window.__origamiRemeasure = function() {
+        measure();
+        if (index > last) { index = last; }
+        apply(false);
+      };
 
       function turn(delta) {
         var wanted = Math.min(Math.max(0, index + delta), last);
