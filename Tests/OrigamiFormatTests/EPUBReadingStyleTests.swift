@@ -72,6 +72,37 @@ struct EPUBReadingStyleTests {
         #expect(css(.init(lineSpacing: 0.1)).contains("line-height: 1.10"))
     }
 
+    @Test("The reader's measure beats the book's own stylesheet")
+    func measureIsTheReaders() {
+        // The article we test against ships
+        // `body { max-width: 38em; margin: 1em auto }`, and a book only has
+        // to write `html body` — one step more specific than our `body` —
+        // to win the cascade and put its margins back. Reader offers the
+        // reader a measure; that cannot depend on what a publisher wrote.
+        for layout in EPUBReadingLayout.allCases {
+            let sheet = css(.init(layout: layout))
+            let body = sheet.components(separatedBy: "body {").dropFirst().first?
+                .components(separatedBy: "}").first ?? ""
+            #expect(body.contains("max-width") , "\(layout.rawValue) states no measure")
+            #expect(body.contains("!important"), "\(layout.rawValue) can be overruled")
+        }
+    }
+
+    @Test("Focus takes a share of the view, as Origami Text does")
+    func focusIsAShare() {
+        let sheet = css(.init(layout: .focus))
+        // Origami Text's reading column is 680pt in a window and 67% of a
+        // built-in display in full screen. A fixed measure was right for
+        // one screen and a thin ribbon on the rest.
+        #expect(sheet.contains("max(22em, 67vw)"))
+        // Still centred, and still the narrower reading — Focus is the
+        // words alone, so it does not simply become Scroll.
+        #expect(sheet.contains("margin: 0 auto !important"))
+        #expect(!css(.init(layout: .scrolling)).contains("67vw"))
+        // Scroll fills: no measure to leave space beside.
+        #expect(css(.init(layout: .scrolling)).contains("max-width: none !important"))
+    }
+
     @Test("Links read in the body's ink, not in blue")
     func linksAreNotBlue() {
         // A scholarly page is dense with links — references, glossary
@@ -106,8 +137,8 @@ struct EPUBReadingStyleTests {
         #expect(!scroll.contains("margin: 0 auto"))
         // Focus keeps its narrow measure: that reading is the words alone,
         // and a line the width of a display is not that.
-        #expect(css(.init(layout: .focus)).contains("max-width: 30em"))
-        #expect(css(.init(layout: .focus)).contains("max-width: 30em"))
+        #expect(css(.init(layout: .focus)).contains("max(22em, 67vw)"))
+        #expect(css(.init(layout: .focus)).contains("max(22em, 67vw)"))
 
         // Horizontal is pages side by side: columns a measure wide, a page
         // tall, turned sideways. Where the body scrolls — macOS — the

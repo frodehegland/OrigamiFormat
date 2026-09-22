@@ -246,18 +246,39 @@ public nonisolated enum EPUBReadingStyle {
             // The foot is 2em clear at the bottom so the last line is not
             // under it, and the top has a little more than the sides so the
             // first line is not against the edge.
+            //
+            // `!important` because the measure is the reader's to set, not
+            // the book's. The article we test against ships
+            // `body { max-width: 38em; margin: 1em auto }` in its own
+            // stylesheet, and a book only has to write `html body` — one
+            // step more specific than our `body` — to win the cascade and
+            // put its margins back. Reader offers the reader a measure;
+            // that promise cannot be contingent on what a publisher wrote.
             return """
-            max-width: none;
-                    margin: 0;
-                    padding: 2.5em 2em 5em;
+            max-width: none !important;
+                    margin: 0 !important;
+                    padding: 2.5em 2em 5em !important;
             """
         case .focus:
-            // Nothing else on screen, so the column can be narrower and the
-            // air around it wider — the reading and nothing but.
+            // Nothing else on screen, so the column can be narrower and
+            // the air around it wider — the reading and nothing but.
+            //
+            // A *share* of the view rather than a fixed measure, which is
+            // Origami Text's answer: its reading column is 680 points in a
+            // window and, in full screen, 67% of a built-in display (45%
+            // of an external one). A fixed 30em was fine on a tablet and a
+            // thin ribbon down the middle of a Mac, which is the same
+            // fault by a different name — the number was right for one
+            // screen and wrong for the rest.
+            //
+            // 67vw follows it, with a floor so a phone gets a reading
+            // rather than a sliver: at 393pt that floor gives 22em of the
+            // 23em available, and at 1440 the share gives 965 — Origami
+            // Text's own full-screen width to the point.
             return """
-            max-width: 30em;
-                    margin: 0 auto;
-                    padding: 5em 1.5em 8em;
+            max-width: max(22em, 67vw) !important;
+                    margin: 0 auto !important;
+                    padding: 5em 1.5em 8em !important;
             """
         case .columns:
             // Not a flow. Each of the book's sections is its own box, laid
@@ -267,9 +288,9 @@ public nonisolated enum EPUBReadingStyle {
             // argument, one section at a time, not a ribbon of prose cut
             // into screen-sized pieces.
             return """
-            max-width: none;
-                    margin: 0;
-                    padding: 0;
+            max-width: none !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
                     height: 100%;
                     box-sizing: border-box;
                     display: flex;
@@ -292,9 +313,9 @@ public nonisolated enum EPUBReadingStyle {
             switch settings.horizontalScroller {
             case .body:
                 return """
-                max-width: none;
-                        margin: 0;
-                        padding: 2.5em 2em;
+                max-width: none !important;
+                        margin: 0 !important;
+                        padding: 2.5em 2em !important;
                         height: 100vh;
                         box-sizing: border-box;
                         column-width: 30em;
@@ -318,9 +339,9 @@ public nonisolated enum EPUBReadingStyle {
                 // next. A scroll view can always be left part way; an index
                 // cannot.
                 return """
-                max-width: none;
-                        margin: 0;
-                        padding: 2.5em 2em;
+                max-width: none !important;
+                        margin: 0 !important;
+                        padding: 2.5em 2em !important;
                         height: 100%;
                         box-sizing: border-box;
                         column-width: 30em;
