@@ -150,11 +150,18 @@ struct EPUBReadingStyleTests {
         #expect(!sheet.contains("column-count"))
         // A section taller than the screen scrolls inside its own box
         // rather than spilling into the next one.
-        let column = sheet.components(separatedBy: ".origami-column {").last?
+        // The base rule, not one of the width overrides that follow it.
+        let column = sheet.components(separatedBy: ".origami-column {")
+            .dropFirst().first?
             .components(separatedBy: "}").first ?? ""
         #expect(column.contains("overflow-y: auto"))
         #expect(column.contains("height: 100%"))
         #expect(column.contains("flex: 0 0"))
+        // Whole columns at every width — a clipped section reads as a
+        // fault, and there is no flow for a half column to continue.
+        #expect(sheet.contains("@media (min-width: 700px)  { .origami-column { flex-basis: 50%; } }"))
+        #expect(sheet.contains("flex-basis: 33.3333%"))
+        #expect(sheet.contains("flex-basis: 25%"))
         // Moved by transform like the other paged reading.
         #expect(sheet.contains("transition: transform"))
 
@@ -165,6 +172,34 @@ struct EPUBReadingStyleTests {
         // And no other layout grows section boxes.
         for layout in EPUBReadingLayout.allCases where layout != .columns {
             #expect(!css(.init(layout: layout)).contains(".origami-column"))
+        }
+    }
+
+    @Test("An iPad mini shows two section columns, whichever way it is held")
+    func twoColumnsOnAMini() {
+        // The ladder in the stylesheet, resolved the way the page will:
+        // the basis for a viewport width, and how many columns fit.
+        func columns(at width: Double) -> Double {
+            let basis: Double
+            if width >= 1700 { basis = 0.25 }
+            else if width >= 1200 { basis = 1.0 / 3.0 }
+            else if width >= 700 { basis = 0.5 }
+            else { basis = 1 }
+            return width / (width * basis)
+        }
+        // An iPad mini, portrait and landscape.
+        #expect(columns(at: 744).rounded() == 2)
+        #expect(columns(at: 1133).rounded() == 2)
+        // Never a fraction of a column, at any width worth reading on.
+        for width in stride(from: 320.0, through: 2200.0, by: 1.0) {
+            let fitted = columns(at: width)
+            #expect(abs(fitted - fitted.rounded()) < 0.0001,
+                    "\(Int(width))pt gives \(fitted) columns")
+        }
+        // And the measure stays readable throughout.
+        for width in [700.0, 1199.0, 1200.0, 1699.0, 1700.0, 2200.0] {
+            let measure = width / columns(at: width)
+            #expect(measure >= 340 && measure <= 620, "\(Int(width))pt → \(Int(measure))pt column")
         }
     }
 

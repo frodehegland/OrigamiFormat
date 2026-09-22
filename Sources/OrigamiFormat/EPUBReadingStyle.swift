@@ -157,7 +157,7 @@ public nonisolated enum EPUBReadingStyle {
         guard settings.layout == .columns else { return "" }
         return """
         .origami-column {
-          flex: 0 0 min(34em, 88vw);
+          flex: 0 0 100%;
           height: 100%;
           overflow-y: auto;
           overflow-x: hidden;
@@ -167,6 +167,15 @@ public nonisolated enum EPUBReadingStyle {
           -webkit-overflow-scrolling: touch;
         }
         .origami-column > :first-child { margin-top: 0; }
+        /* Whole columns at every width, never a clipped one. A section
+           cut off down its right edge reads as a fault rather than as an
+           invitation to swipe — this is not a flow, so there is nothing
+           for a half column to be continuing. An iPad mini lands on two
+           in both orientations; the measure stays between 350 and 600px
+           throughout. */
+        @media (min-width: 700px)  { .origami-column { flex-basis: 50%; } }
+        @media (min-width: 1200px) { .origami-column { flex-basis: 33.3333%; } }
+        @media (min-width: 1700px) { .origami-column { flex-basis: 25%; } }
         """
     }
 
