@@ -174,7 +174,7 @@ public nonisolated enum EPUBReadingStyle {
         guard settings.layout == .columns else { return "" }
         return """
         .origami-column {
-          flex: 0 0 100%;
+          flex: 0 0 calc(100% / var(--origami-columns, 1));
           height: 100%;
           overflow-y: auto;
           overflow-x: hidden;
@@ -208,15 +208,6 @@ public nonisolated enum EPUBReadingStyle {
         /* Separators between sections are spacing for a page that scrolls
            down, and stray empty boxes in a row. */
         .origami-passthrough > br, body > br { display: none; }
-        /* Whole columns at every width, never a clipped one. A section
-           cut off down its right edge reads as a fault rather than as an
-           invitation to swipe — this is not a flow, so there is nothing
-           for a half column to be continuing. An iPad mini lands on two
-           in both orientations; the measure stays between 350 and 600px
-           throughout. */
-        @media (min-width: 700px)  { .origami-column { flex-basis: 50%; } }
-        @media (min-width: 1200px) { .origami-column { flex-basis: 33.3333%; } }
-        @media (min-width: 1700px) { .origami-column { flex-basis: 25%; } }
         """
     }
 
@@ -744,19 +735,34 @@ public nonisolated enum EPUBReadingStyle {
       var index = 0;
       var pitch = 0;
       var last = 0;
+      var shown = 1;
 
       function measure() {
         var body = document.body;
         var style = getComputedStyle(body);
         if (body.dataset.origamiColumns === 'sections') {
-          // Section columns are real boxes, so ask one how wide it is
-          // rather than deriving it — its width comes from a min() in the
-          // stylesheet, which only the page can resolve.
           var boxes = body.getElementsByClassName('origami-column');
-          if (!boxes.length) { pitch = body.clientWidth; last = 0; return; }
-          pitch = boxes[0].getBoundingClientRect().width;
-          var visible = pitch > 0 ? Math.max(1, Math.floor(body.clientWidth / pitch)) : 1;
-          last = Math.max(0, boxes.length - visible);
+          if (!boxes.length) { pitch = body.clientWidth; shown = 1; last = 0; return; }
+          // Origami Text's rule, which it arrived at by reading on these
+          // screens: two columns at least, one more for every 460 points,
+          // and never more columns than the book has sections — three
+          // columns for a two-section chapter would be a third of the view
+          // showing nothing.
+          var width = body.clientWidth;
+          shown = Math.min(Math.max(Math.floor(width / 460), 2), boxes.length);
+          // One departure from Origami Text's rule, because Origami Text
+          // wrote it for a Mac window and an iPad: its floor of two would
+          // put two 196-point columns on a phone, which is two things too
+          // narrow to read. A column has to stay wide enough to hold a
+          // line, and below that one column is the honest answer.
+          if (shown > 1 && width / shown < 320) {
+            shown = Math.max(1, Math.floor(width / 320));
+          }
+          // The count goes to the stylesheet, which owns the arithmetic:
+          // the page knows the number, CSS knows what to do with it.
+          body.style.setProperty('--origami-columns', shown);
+          pitch = width / shown;
+          last = Math.max(0, boxes.length - shown);
           return;
         }
         var count = parseInt(style.columnCount) || 1;
@@ -765,8 +771,9 @@ public nonisolated enum EPUBReadingStyle {
         var inner = body.clientWidth
           - (parseFloat(style.paddingLeft) || 0)
           - (parseFloat(style.paddingRight) || 0);
-        var width = count > 0 ? (inner - gap * (count - 1)) / count : inner;
-        pitch = width + gap;
+        var measure = count > 0 ? (inner - gap * (count - 1)) / count : inner;
+        pitch = measure + gap;
+        shown = count;
         // The last index that still leaves the view full of columns.
         var total = pitch > 0 ? Math.ceil(body.scrollWidth / pitch) : 1;
         last = Math.max(0, total - count);
@@ -782,7 +789,7 @@ public nonisolated enum EPUBReadingStyle {
           body.style.transition = '';
         }
         window.webkit.messageHandlers.reader.postMessage({
-          kind: 'paging', index: index, last: last, pitch: pitch
+          kind: 'paging', index: index, last: last, pitch: pitch, shown: shown
         });
       }
 
@@ -799,6 +806,13 @@ public nonisolated enum EPUBReadingStyle {
         apply(true);
       }
       window.__origamiTurn = turn;
+      // A button or an arrow key turns the whole spread — every column in
+      // view moves on, which is what turning a page means. A swipe nudges
+      // by one. Origami Text draws the same line, and it is the right one:
+      // a finger is a small correction, a button is a decision.
+      window.__origamiTurnSpread = function(direction) {
+        turn(direction * Math.max(1, shown));
+      };
 
       // A rotation changes the pitch and the count; the reader stays on the
       // column they were reading rather than being thrown to an offset that
@@ -886,8 +900,8 @@ public nonisolated enum EPUBReadingStyle {
           var sign = \(forward ? "1" : "-1");
           // Where the columns are paged by transform, the pager owns the
           // move — so an arrow and a finger do exactly the same thing.
-          if (typeof window.__origamiTurn === 'function') {
-            window.__origamiTurn(sign);
+          if (typeof window.__origamiTurnSpread === 'function') {
+            window.__origamiTurnSpread(sign);
             return;
           }
           var body = document.body;

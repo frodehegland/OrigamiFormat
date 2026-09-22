@@ -156,12 +156,12 @@ struct EPUBReadingStyleTests {
             .components(separatedBy: "}").first ?? ""
         #expect(column.contains("overflow-y: auto"))
         #expect(column.contains("height: 100%"))
-        #expect(column.contains("flex: 0 0"))
-        // Whole columns at every width — a clipped section reads as a
-        // fault, and there is no flow for a half column to continue.
-        #expect(sheet.contains("@media (min-width: 700px)  { .origami-column { flex-basis: 50%; } }"))
-        #expect(sheet.contains("flex-basis: 33.3333%"))
-        #expect(sheet.contains("flex-basis: 25%"))
+        // CSS owns the arithmetic; the page supplies the count, because
+        // only the page knows how many sections the book has.
+        #expect(column.contains("calc(100% / var(--origami-columns, 1))"))
+        // And with no count supplied it is one whole column, never a
+        // fraction of one.
+        #expect(column.contains("var(--origami-columns, 1)"))
         // Moved by transform like the other paged reading.
         #expect(sheet.contains("transition: transform"))
 
@@ -175,32 +175,52 @@ struct EPUBReadingStyleTests {
         }
     }
 
-    @Test("An iPad mini shows two section columns, whichever way it is held")
-    func twoColumnsOnAMini() {
-        // The ladder in the stylesheet, resolved the way the page will:
-        // the basis for a viewport width, and how many columns fit.
-        func columns(at width: Double) -> Double {
-            let basis: Double
-            if width >= 1700 { basis = 0.25 }
-            else if width >= 1200 { basis = 1.0 / 3.0 }
-            else if width >= 700 { basis = 0.5 }
-            else { basis = 1 }
-            return width / (width * basis)
+    @Test("Columns follows Origami Text's rule, with a floor for a phone")
+    func origamiColumnRule() {
+        // The rule the page applies, restated here so a change to it has
+        // to be a change to this too. Origami Text: two at least, one more
+        // for every 460 points, never more than the book has sections.
+        func shown(width: Double, sections: Int) -> Int {
+            var count = min(max(Int(width / 460), 2), sections)
+            if count > 1 && width / Double(count) < 320 {
+                count = max(1, Int(width / 320))
+            }
+            return count
         }
-        // An iPad mini, portrait and landscape.
-        #expect(columns(at: 744).rounded() == 2)
-        #expect(columns(at: 1133).rounded() == 2)
-        // Never a fraction of a column, at any width worth reading on.
+        // An iPad mini is two, whichever way it is held — the ask.
+        #expect(shown(width: 744, sections: 14) == 2)
+        #expect(shown(width: 1133, sections: 14) == 2)
+        // A Mac window earns a third at Origami Text's 460-point step.
+        #expect(shown(width: 1440, sections: 14) == 3)
+        // Never more columns than sections: three columns for a
+        // two-section chapter would leave a third of the view empty.
+        #expect(shown(width: 1800, sections: 2) == 2)
+        #expect(shown(width: 1800, sections: 1) == 1)
+        // The departure: Origami Text's floor of two would put two
+        // 196-point columns on a phone.
+        #expect(shown(width: 393, sections: 14) == 1)
+        // And a column is never narrower than a line needs.
         for width in stride(from: 320.0, through: 2200.0, by: 1.0) {
-            let fitted = columns(at: width)
-            #expect(abs(fitted - fitted.rounded()) < 0.0001,
-                    "\(Int(width))pt gives \(fitted) columns")
+            let count = shown(width: width, sections: 40)
+            #expect(width / Double(count) >= 320,
+                    "\(Int(width))pt → \(count) columns")
         }
-        // And the measure stays readable throughout.
-        for width in [700.0, 1199.0, 1200.0, 1699.0, 1700.0, 2200.0] {
-            let measure = width / columns(at: width)
-            #expect(measure >= 340 && measure <= 620, "\(Int(width))pt → \(Int(measure))pt column")
-        }
+    }
+
+    @Test("A button turns the spread; a swipe nudges one column")
+    func spreadVersusNudge() {
+        let script = EPUBReadingStyle.columnPagingScript
+        // Origami Text's line: "the buttons turn whole spreads; the swipe
+        // nudges."
+        #expect(script.contains("__origamiTurnSpread"))
+        #expect(script.contains("turn(direction * Math.max(1, shown))"))
+        // The swipe still moves exactly one.
+        #expect(script.contains("turn(dx < 0 ? 1 : -1)"))
+        // And the arrows and keys ask for the spread.
+        #expect(EPUBReadingStyle.turnPageScript(forward: true)
+            .contains("__origamiTurnSpread"))
+        // How many stand across is reported, so the foot can say "3–5 of 12".
+        #expect(script.contains("shown: shown"))
     }
 
     @Test("Every paged reading is clipped and sized by html, on every platform")
@@ -326,9 +346,12 @@ struct EPUBReadingStyleTests {
         // page can resolve — so it is measured, not derived.
         #expect(script.contains("origamiColumns === 'sections'"))
         #expect(script.contains("getElementsByClassName('origami-column')"))
-        #expect(script.contains("getBoundingClientRect().width"))
+        // Origami Text's rule, applied where the page can see both the
+        // width and the number of sections.
+        #expect(script.contains("Math.floor(width / 460)"))
+        #expect(script.contains("setProperty('--origami-columns', shown)"))
         // The last index still leaves the view full.
-        #expect(script.contains("boxes.length - visible"))
+        #expect(script.contains("boxes.length - shown"))
     }
 
     @Test("A swipe steps one column, and only when it means to")
