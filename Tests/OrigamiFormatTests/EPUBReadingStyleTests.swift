@@ -90,11 +90,12 @@ struct EPUBReadingStyleTests {
         #expect(!EPUBReadingLayout.scrolling.isPaged)
     }
 
-    @Test("Where the body cannot scroll, the viewport does — or Horizontal is not horizontal")
+    @Test("Where the body cannot scroll, nothing scrolls — the columns are moved")
     func horizontalOnTheViewport() {
         // iOS and visionOS: WebKit ignores overflow on the body, so asking
-        // for it there produces no sideways scroller at all and the columns
-        // collapse into ordinary scrolling. The overflow belongs on html.
+        // for it there produces no sideways scroller at all. Rather than
+        // move the overflow to html and snap a scroll view afterwards, the
+        // columns are carried by a transform — see `pagedByTransform`.
         let viewport = css(.init(layout: .horizontal, horizontalScroller: .viewport))
         #expect(viewport.contains("column-width: 30em"))
         // The body claims no overflow it will not be given…
@@ -102,12 +103,10 @@ struct EPUBReadingStyleTests {
         #expect(!body.contains("overflow-x"))
         // …and does not measure itself against a viewport unit that moves.
         #expect(!viewport.contains("height: 100vh"))
-        // html carries both the height and the sideways scroll.
+        // html gives the columns their definite height, and clips them.
         let html = viewport.components(separatedBy: "html {").last?
             .components(separatedBy: "}").first ?? ""
         #expect(html.contains("height: 100%"))
-        #expect(html.contains("overflow-x: auto"))
-        #expect(html.contains("overflow-y: hidden"))
     }
 
     @Test("A tablet in Horizontal reads as a book: two pages side by side")
@@ -127,6 +126,47 @@ struct EPUBReadingStyleTests {
             #expect(!css(.init(layout: layout, horizontalScroller: .viewport))
                 .contains("column-count"))
         }
+    }
+
+    @Test("Paged columns are moved by a transform, so there is no part way")
+    func pagedByTransform() {
+        let viewport = css(.init(layout: .horizontal, horizontalScroller: .viewport))
+        // The columns are carried by a transition, not by a scroller…
+        #expect(viewport.contains("transform: translateX(0px)"))
+        #expect(viewport.contains("transition: transform"))
+        // …and there is no scroller to be left between two columns.
+        let html = viewport.components(separatedBy: "html {").last?
+            .components(separatedBy: "}").first ?? ""
+        #expect(html.contains("overflow: hidden"))
+        #expect(!html.contains("overflow-x: auto"))
+    }
+
+    @Test("A swipe steps one column, and only when it means to")
+    func swipeIntent() {
+        let script = EPUBReadingStyle.columnPagingScript
+        // An index, clamped — the reading is at a column or it is nowhere.
+        #expect(script.contains("Math.min(Math.max(0, index + delta), last)"))
+        // Far enough, and more sideways than up.
+        #expect(script.contains("Math.abs(dx) < 40"))
+        #expect(script.contains("Math.abs(dx) < Math.abs(dy)"))
+        // Selecting words is not turning a page.
+        #expect(script.contains("String(selection).trim()"))
+        // Fingers left brings the next column in.
+        #expect(script.contains("turn(dx < 0 ? 1 : -1)"))
+        // A rotation keeps the reader on the column they were reading.
+        #expect(script.contains("addEventListener('resize'"))
+        #expect(script.contains("if (index > last) { index = last; }"))
+        // Injected twice over one page must not make two pagers.
+        #expect(script.contains("if (window.__origamiPaging) { return; }"))
+    }
+
+    @Test("An arrow and a finger move the reading the same way")
+    func arrowsUseThePager() {
+        let forward = EPUBReadingStyle.turnPageScript(forward: true)
+        #expect(forward.contains("window.__origamiTurn"))
+        // And where nothing is paged, the old scrolling still stands.
+        #expect(forward.contains("body.scrollBy"))
+        #expect(forward.contains("window.scrollBy"))
     }
 
     @Test("The page reports what one column measures, and again when resized")

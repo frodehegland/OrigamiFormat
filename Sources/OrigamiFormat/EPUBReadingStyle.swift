@@ -109,9 +109,7 @@ public nonisolated enum EPUBReadingStyle {
             ? """
 
             height: 100%;
-                    overflow-x: auto;
-                    overflow-y: hidden;
-                    -webkit-overflow-scrolling: touch;
+                    overflow: hidden;
             """
             : ""
 
@@ -222,6 +220,12 @@ public nonisolated enum EPUBReadingStyle {
                 // reader turned the device — which is not what a book does.
                 // Below tablet width one column stands, because two on a
                 // phone is two things too narrow to read.
+                // Not a scroller. The columns are moved by a transform,
+                // so the reading is always *at* a column and never between
+                // two — which is Origami Text's iOS reading exactly: it
+                // paginates, holds an index, and animates from one to the
+                // next. A scroll view can always be left part way; an index
+                // cannot.
                 return """
                 max-width: none;
                         margin: 0;
@@ -231,6 +235,9 @@ public nonisolated enum EPUBReadingStyle {
                         column-width: 30em;
                         column-gap: 4em;
                         column-fill: auto;
+                        transform: translateX(0px);
+                        transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+                        will-change: transform;
                 """
             }
         }
@@ -398,6 +405,112 @@ public nonisolated enum EPUBReadingStyle {
 
     /// Turning a page in Horizontal: the window scrolls by its own width,
     /// which is exactly one screenful of columns.
+    /// Paging by column, done in the page: a swipe steps an index and the
+    /// stylesheet's transition carries the columns across.
+    ///
+    /// This is Origami Text's iOS reading, in the one form a rendered book
+    /// allows. There, Horizontal is not a scroll view — the document is
+    /// paginated, an index is held, and moving between pages is
+    /// `withAnimation(.easeInOut)`. The reading is therefore always *at* a
+    /// page. A scroll view cannot promise that: snapping only corrects the
+    /// resting place after the fact, so a slow drag still shows two half
+    /// columns on the way, and an interrupted one can stop anywhere.
+    ///
+    /// So the columns are moved by a transform and there is no scroller to
+    /// be part way through. The index is clamped, kept across a rotation
+    /// (the column it was on stays the column it is on), and reported so
+    /// the app can say where the reader is. `__origamiTurn` is left on the
+    /// window so the foot's arrows and the arrow keys move the same way a
+    /// finger does.
+    public static let columnPagingScript = """
+    (function() {
+      if (window.__origamiPaging) { return; }
+      window.__origamiPaging = true;
+
+      var index = 0;
+      var pitch = 0;
+      var last = 0;
+
+      function measure() {
+        var body = document.body;
+        var style = getComputedStyle(body);
+        var count = parseInt(style.columnCount) || 1;
+        var gap = parseFloat(style.columnGap) || 0;
+        if (!isFinite(gap)) { gap = 0; }
+        var inner = body.clientWidth
+          - (parseFloat(style.paddingLeft) || 0)
+          - (parseFloat(style.paddingRight) || 0);
+        var width = count > 0 ? (inner - gap * (count - 1)) / count : inner;
+        pitch = width + gap;
+        // The last index that still leaves the view full of columns.
+        var total = pitch > 0 ? Math.ceil(body.scrollWidth / pitch) : 1;
+        last = Math.max(0, total - count);
+      }
+
+      function apply(animated) {
+        var body = document.body;
+        if (!animated) { body.style.transition = 'none'; }
+        body.style.transform = 'translateX(' + (-index * pitch) + 'px)';
+        if (!animated) {
+          // Let the cut land before the transition is allowed back.
+          void body.offsetWidth;
+          body.style.transition = '';
+        }
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'paging', index: index, last: last, pitch: pitch
+        });
+      }
+
+      function turn(delta) {
+        var wanted = Math.min(Math.max(0, index + delta), last);
+        if (wanted === index) { return; }
+        index = wanted;
+        apply(true);
+      }
+      window.__origamiTurn = turn;
+
+      // A rotation changes the pitch and the count; the reader stays on the
+      // column they were reading rather than being thrown to an offset that
+      // no longer means anything.
+      window.addEventListener('resize', function() {
+        measure();
+        if (index > last) { index = last; }
+        apply(false);
+      });
+
+      // A swipe is a horizontal intent: far enough, and more sideways than
+      // up. Anything else is left to the page — a tap, a selection drag, a
+      // link.
+      var startX = 0, startY = 0, tracking = false;
+      document.addEventListener('touchstart', function(event) {
+        if (event.touches.length !== 1) { tracking = false; return; }
+        startX = event.touches[0].clientX;
+        startY = event.touches[0].clientY;
+        tracking = true;
+      }, { passive: true });
+      document.addEventListener('touchend', function(event) {
+        if (!tracking) { return; }
+        tracking = false;
+        var touch = event.changedTouches[0];
+        if (!touch) { return; }
+        var dx = touch.clientX - startX;
+        var dy = touch.clientY - startY;
+        if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) { return; }
+        var selection = window.getSelection();
+        if (selection && String(selection).trim()) { return; }
+        // Fingers left brings the next column in, as a page turns.
+        turn(dx < 0 ? 1 : -1);
+      }, { passive: true });
+
+      measure();
+      apply(false);
+      document.addEventListener('DOMContentLoaded', function() {
+        measure();
+        apply(false);
+      });
+    })();
+    """
+
     /// What one column measures, end to end — its width plus the gap after
     /// it — reported from the page and again whenever the page is resized.
     ///
@@ -440,6 +553,12 @@ public nonisolated enum EPUBReadingStyle {
         """
         (function() {
           var sign = \(forward ? "1" : "-1");
+          // Where the columns are paged by transform, the pager owns the
+          // move — so an arrow and a finger do exactly the same thing.
+          if (typeof window.__origamiTurn === 'function') {
+            window.__origamiTurn(sign);
+            return;
+          }
           var body = document.body;
           var step = (body.clientWidth || window.innerWidth) * sign;
           if (body.scrollWidth > body.clientWidth + 1) {
