@@ -184,7 +184,7 @@ public nonisolated enum EPUBReadingStyle {
           overflow-y: auto;
           overflow-x: hidden;
           box-sizing: border-box;
-          padding: 2.5em 2em;
+          padding: 2.5em 2em 0.75em;
           border-right: 1px solid color-mix(in srgb, currentColor 12%, transparent);
           -webkit-overflow-scrolling: touch;
         }
@@ -315,7 +315,7 @@ public nonisolated enum EPUBReadingStyle {
                 return """
                 max-width: none !important;
                         margin: 0 !important;
-                        padding: 2.5em 2em !important;
+                        padding: 2.5em 2em 0.75em !important;
                         height: 100vh;
                         box-sizing: border-box;
                         column-width: 30em;
@@ -341,7 +341,7 @@ public nonisolated enum EPUBReadingStyle {
                 return """
                 max-width: none !important;
                         margin: 0 !important;
-                        padding: 2.5em 2em !important;
+                        padding: 2.5em 2em 0.75em !important;
                         height: 100%;
                         box-sizing: border-box;
                         column-width: 30em;
@@ -738,6 +738,66 @@ public nonisolated enum EPUBReadingStyle {
       if (getComputedStyle(document.body).display === 'flex') {
         window.__origamiGroupSections();
       }
+    })();
+    """
+
+    /// Trims each column to a whole number of lines.
+    ///
+    /// A column with a definite height shows only the lines that fit, and
+    /// what is left below the last one is wasted — up to a full line of it,
+    /// on top of whatever padding the stylesheet asked for. Together that
+    /// was enough to look like room for another line, because it was.
+    ///
+    /// So the leftover is measured and given back: the bottom padding
+    /// starts small, the page works out how many whole lines the space
+    /// holds, and then sets the padding to exactly the remainder. The text
+    /// block becomes a whole number of lines — the most the column can
+    /// hold — and the space under the last line is deliberate rather than
+    /// accidental.
+    ///
+    /// Reads `line-height` rather than assuming it: the reader sets the
+    /// leading, and a book may set its own.
+    public static let fitLinesScript = """
+    (function() {
+      if (window.__origamiFitting) { return; }
+      window.__origamiFitting = true;
+
+      function fit(element) {
+        var style = getComputedStyle(element);
+        // A column only has lines to fit if its height is definite.
+        if (style.overflowY === 'visible' && style.height === 'auto') { return; }
+        var line = parseFloat(style.lineHeight);
+        if (!isFinite(line) || line <= 0) { return; }
+        var top = parseFloat(style.paddingTop) || 0;
+        // Start from the stylesheet's own small value, not from whatever
+        // this function set last time, or each pass would shrink the text.
+        element.style.paddingBottom = '';
+        var floor = parseFloat(getComputedStyle(element).paddingBottom) || 0;
+        var box = element.clientHeight;
+        var available = box - top - floor;
+        if (available < line) { return; }
+        var lines = Math.floor(available / line);
+        var wanted = box - top - lines * line;
+        if (wanted > floor + 0.5) {
+          element.style.paddingBottom = wanted + 'px';
+        }
+      }
+
+      window.__origamiFitLines = function() {
+        var boxes = document.getElementsByClassName('origami-column');
+        if (boxes.length) {
+          for (var i = 0; i < boxes.length; i++) { fit(boxes[i]); }
+          return;
+        }
+        // Horizontal: the columns are the body's own, so the body is what
+        // has to hold whole lines.
+        if (getComputedStyle(document.body).columnCount !== 'auto') {
+          fit(document.body);
+        }
+      };
+
+      window.addEventListener('resize', function() { window.__origamiFitLines(); });
+      window.__origamiFitLines();
     })();
     """
 

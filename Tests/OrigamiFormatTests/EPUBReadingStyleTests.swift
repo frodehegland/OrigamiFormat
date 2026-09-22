@@ -72,6 +72,34 @@ struct EPUBReadingStyleTests {
         #expect(css(.init(lineSpacing: 0.1)).contains("line-height: 1.10"))
     }
 
+    @Test("A column holds as many whole lines as it can")
+    func fitsWholeLines() {
+        let script = EPUBReadingStyle.fitLinesScript
+        // A column with a definite height shows only the lines that fit,
+        // and what is left under the last one is wasted — up to a whole
+        // line of it, on top of the stylesheet's padding. That together is
+        // what looked like room for another line.
+        #expect(script.contains("Math.floor(available / line)"))
+        // The leading is read, never assumed: the reader sets it, and a
+        // book may set its own.
+        #expect(script.contains("parseFloat(style.lineHeight)"))
+        // Measured from the stylesheet's own value, not from whatever the
+        // last pass left, or each pass would shrink the text a little more.
+        #expect(script.contains("element.style.paddingBottom = ''"))
+        // Both readings: the section boxes, or the body's own columns.
+        #expect(script.contains("getElementsByClassName('origami-column')"))
+        #expect(script.contains("columnCount !== 'auto'"))
+        // Rotating the iPad changes the height, so it fits again.
+        #expect(script.contains("addEventListener('resize'"))
+
+        // And the stylesheet leaves it room to claim: a small bottom
+        // padding to grow from rather than 2.5em of fixed air.
+        for layout in [EPUBReadingLayout.horizontal, .columns] {
+            #expect(css(.init(layout: layout, horizontalScroller: .viewport))
+                .contains("0.75em"), "\(layout.rawValue)")
+        }
+    }
+
     @Test("The reader's measure beats the book's own stylesheet")
     func measureIsTheReaders() {
         // The article we test against ships
