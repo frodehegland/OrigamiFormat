@@ -79,14 +79,57 @@ struct EPUBReadingStyleTests {
         #expect(css(.init(layout: .focus)).contains("max-width: 30em"))
 
         // Horizontal is pages side by side: columns a measure wide, a page
-        // tall, turned sideways.
-        let horizontal = css(.init(layout: .horizontal))
+        // tall, turned sideways. Where the body scrolls — macOS — the
+        // overflow and the page-tall height are the body's.
+        let horizontal = css(.init(layout: .horizontal, horizontalScroller: .body))
         #expect(horizontal.contains("column-width: 30em"))
         #expect(horizontal.contains("height: 100vh"))
         #expect(horizontal.contains("overflow-x: auto"))
         #expect(horizontal.contains("overflow-y: hidden"))
         #expect(EPUBReadingLayout.horizontal.isPaged)
         #expect(!EPUBReadingLayout.scrolling.isPaged)
+    }
+
+    @Test("Where the body cannot scroll, the viewport does — or Horizontal is not horizontal")
+    func horizontalOnTheViewport() {
+        // iOS and visionOS: WebKit ignores overflow on the body, so asking
+        // for it there produces no sideways scroller at all and the columns
+        // collapse into ordinary scrolling. The overflow belongs on html.
+        let viewport = css(.init(layout: .horizontal, horizontalScroller: .viewport))
+        #expect(viewport.contains("column-width: 30em"))
+        // The body claims no overflow it will not be given…
+        let body = viewport.components(separatedBy: "body {").last ?? ""
+        #expect(!body.contains("overflow-x"))
+        // …and does not measure itself against a viewport unit that moves.
+        #expect(!viewport.contains("height: 100vh"))
+        // html carries both the height and the sideways scroll.
+        let html = viewport.components(separatedBy: "html {").last?
+            .components(separatedBy: "}").first ?? ""
+        #expect(html.contains("height: 100%"))
+        #expect(html.contains("overflow-x: auto"))
+        #expect(html.contains("overflow-y: hidden"))
+    }
+
+    @Test("Only Horizontal touches the viewport's overflow")
+    func otherLayoutsLeaveTheViewportAlone() {
+        for layout in EPUBReadingLayout.allCases where layout != .horizontal {
+            let sheet = css(.init(layout: layout, horizontalScroller: .viewport))
+            let html = sheet.components(separatedBy: "html {").last?
+                .components(separatedBy: "}").first ?? ""
+            #expect(!html.contains("overflow-x"), "\(layout.rawValue) should not touch the viewport")
+        }
+    }
+
+    @Test("A page turn moves whichever element actually scrolls")
+    func pageTurnFindsTheScroller() {
+        let forward = EPUBReadingStyle.turnPageScript(forward: true)
+        // The body when it has its own scroller, the window when it has not
+        // — decided in the page, because it differs by platform.
+        #expect(forward.contains("body.scrollWidth > body.clientWidth"))
+        #expect(forward.contains("body.scrollBy"))
+        #expect(forward.contains("window.scrollBy"))
+        let back = EPUBReadingStyle.turnPageScript(forward: false)
+        #expect(back.contains("-1"))
     }
 
     @Test("A face is asked for only when the reader asked for one")
@@ -134,8 +177,13 @@ struct EPUBReadingStyleTests {
 
     @Test("Turning a page moves by one screenful, in the direction asked")
     func pageTurns() {
-        #expect(EPUBReadingStyle.turnPageScript(forward: true).contains("scrollBy({ left: step"))
-        #expect(EPUBReadingStyle.turnPageScript(forward: false).contains("scrollBy({ left: -step"))
+        // The direction is now carried in the step rather than in the
+        // literal, so the same two lines serve whichever element scrolls.
+        let forward = EPUBReadingStyle.turnPageScript(forward: true)
+        #expect(forward.contains("var sign = 1"))
+        #expect(forward.contains("(body.clientWidth || window.innerWidth) * sign"))
+        #expect(forward.contains("left: step"))
+        #expect(EPUBReadingStyle.turnPageScript(forward: false).contains("var sign = -1"))
     }
 
     @Test("The style script survives a stylesheet with backticks or backslashes")

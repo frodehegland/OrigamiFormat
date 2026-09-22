@@ -9,6 +9,32 @@ import Foundation
 /// book that styles its own body.
 public nonisolated enum EPUBReadingStyle {
 
+    /// Who scrolls, when a book is set in pages side by side.
+    ///
+    /// On macOS `overflow-x` on `body` gives the body its own scroller and
+    /// everything works. On iOS and visionOS it does not: WebKit hands the
+    /// document scroll to the web view's own scroll view and **ignores
+    /// `overflow` on `body`**, so no sideways scroller is ever made — the
+    /// columns collapse and Horizontal reads exactly like Scrolling. There
+    /// the overflow has to go on `html`, where it propagates to the
+    /// viewport, and the page turn has to move the window rather than the
+    /// body.
+    public enum HorizontalScroller: String, Hashable, Sendable, CaseIterable {
+        /// The body scrolls itself.
+        case body
+        /// The viewport scrolls, because the body cannot.
+        case viewport
+
+        /// What this platform's WebKit actually does.
+        public static var platformDefault: HorizontalScroller {
+            #if os(macOS)
+            .body
+            #else
+            .viewport
+            #endif
+        }
+    }
+
     /// Everything the reader has chosen about how a book is set.
     public struct Settings: Hashable, Sendable {
         public var theme: EPUBReadingTheme
@@ -21,6 +47,10 @@ public nonisolated enum EPUBReadingStyle {
         public var headingFont: EPUBReadingFont
         /// Whether the system appearance is dark; a theme may override it.
         public var dark: Bool
+        /// Who scrolls sideways in Horizontal. Defaults to what the running
+        /// platform's WebKit does; stated rather than assumed so both
+        /// arrangements can be tested anywhere.
+        public var horizontalScroller: HorizontalScroller
 
         public init(theme: EPUBReadingTheme = .system,
                     layout: EPUBReadingLayout = .scrolling,
@@ -28,7 +58,8 @@ public nonisolated enum EPUBReadingStyle {
                     lineSpacing: Double = 1.6,
                     bodyFont: EPUBReadingFont = .book,
                     headingFont: EPUBReadingFont = .book,
-                    dark: Bool = false) {
+                    dark: Bool = false,
+                    horizontalScroller: HorizontalScroller = .platformDefault) {
             self.theme = theme
             self.layout = layout
             self.scale = scale
@@ -36,6 +67,7 @@ public nonisolated enum EPUBReadingStyle {
             self.bodyFont = bodyFont
             self.headingFont = headingFont
             self.dark = dark
+            self.horizontalScroller = horizontalScroller
         }
 
         public var paperHex: String { theme.paperHex(dark: dark) }
@@ -69,12 +101,26 @@ public nonisolated enum EPUBReadingStyle {
         let bodyFamily = settings.bodyFont.cssFamily.map { "font-family: \($0);" } ?? ""
         let headingFamily = settings.headingFont.cssFamily.map { "font-family: \($0);" } ?? ""
 
+        // Where the viewport is the sideways scroller, `html` is what
+        // carries the overflow and the definite height the columns measure
+        // themselves against.
+        let viewport = settings.layout == .horizontal
+            && settings.horizontalScroller == .viewport
+            ? """
+
+            height: 100%;
+                    overflow-x: auto;
+                    overflow-y: hidden;
+                    -webkit-overflow-scrolling: touch;
+            """
+            : ""
+
         return """
         :root { color-scheme: \(dark ? "dark" : "light"); }
         html {
             -webkit-text-size-adjust: 100%;
             background: \(paper);
-            color: \(ink);
+            color: \(ink);\(viewport)
         }
         body {
             \(measure(settings))
@@ -131,20 +177,40 @@ public nonisolated enum EPUBReadingStyle {
             """
         case .horizontal:
             // Pages side by side: the text is cut into columns as wide as a
-            // comfortable measure, and the window scrolls sideways through
-            // them. `100vh` height is what makes a column a page.
-            return """
-            max-width: none;
-                    margin: 0;
-                    padding: 2.5em 2em;
-                    height: 100vh;
-                    box-sizing: border-box;
-                    column-width: 30em;
-                    column-gap: 4em;
-                    column-fill: auto;
-                    overflow-x: auto;
-                    overflow-y: hidden;
-            """
+            // comfortable measure, and the reading moves sideways through
+            // them. A definite height is what makes a column a page.
+            //
+            // Which element scrolls is not a preference — see
+            // `HorizontalScroller`. Where the viewport scrolls, the body
+            // must not claim an overflow it will not be given, and its
+            // height comes from `html` (set in `css`) rather than from
+            // `100vh`, which the dynamic viewport moves about under it.
+            switch settings.horizontalScroller {
+            case .body:
+                return """
+                max-width: none;
+                        margin: 0;
+                        padding: 2.5em 2em;
+                        height: 100vh;
+                        box-sizing: border-box;
+                        column-width: 30em;
+                        column-gap: 4em;
+                        column-fill: auto;
+                        overflow-x: auto;
+                        overflow-y: hidden;
+                """
+            case .viewport:
+                return """
+                max-width: none;
+                        margin: 0;
+                        padding: 2.5em 2em;
+                        height: 100%;
+                        box-sizing: border-box;
+                        column-width: 30em;
+                        column-gap: 4em;
+                        column-fill: auto;
+                """
+            }
         }
     }
 
@@ -293,11 +359,24 @@ public nonisolated enum EPUBReadingStyle {
 
     /// Turning a page in Horizontal: the window scrolls by its own width,
     /// which is exactly one screenful of columns.
+    /// Turning a page in Horizontal: one screenful of columns sideways.
+    ///
+    /// Which element to move is decided at run time rather than assumed,
+    /// because it differs by platform: on macOS the body has its own
+    /// sideways scroller, and on iOS and visionOS it never does — the
+    /// window is the scroller there, and asking the body to scroll is a
+    /// silent no-op, which is what made the page arrows appear dead.
     public static func turnPageScript(forward: Bool) -> String {
         """
         (function() {
-          var step = document.body.clientWidth || window.innerWidth;
-          document.body.scrollBy({ left: \(forward ? "" : "-")step, behavior: 'smooth' });
+          var sign = \(forward ? "1" : "-1");
+          var body = document.body;
+          var step = (body.clientWidth || window.innerWidth) * sign;
+          if (body.scrollWidth > body.clientWidth + 1) {
+            body.scrollBy({ left: step, behavior: 'smooth' });
+          } else {
+            window.scrollBy({ left: step, behavior: 'smooth' });
+          }
         })();
         """
     }
