@@ -162,7 +162,12 @@ struct EPUBReadingStyleTests {
         #expect(scroll.contains("max-width: none"))
         // A small margin either side, and equal — 2em each.
         #expect(scroll.contains("padding: 2.5em 2em 5em"))
-        #expect(!scroll.contains("margin: 0 auto"))
+        // The body's own margin is zero, not the `0 auto` of a centred
+        // column. Asserted on the declaration rather than by the absence of
+        // "margin: 0 auto" anywhere in the sheet: a 3-D figure's poster is
+        // centred in its frame, quite rightly, and that is not the reading's
+        // measure changing its mind.
+        #expect(scroll.contains("margin: 0 !important"))
         // Focus keeps its narrow measure: that reading is the words alone,
         // and a line the width of a display is not that.
         #expect(css(.init(layout: .focus)).contains("max(22em, 67vw)"))
@@ -597,5 +602,147 @@ struct EPUBReadingStyleTests {
         #expect(script.contains("0.2126"))          // the luminance it judges by
         #expect(script.contains("value < 0.35"))    // and the line it draws
         #expect(script.contains("getComputedStyle(document.body).color"))
+    }
+
+    @Test("Searching and marking paint over the layout, never rewrite it")
+    func markingDoesNotDisturbTheLines() {
+        // Wrapping matches in elements would work, and every web reader used
+        // to do it, but it splits text nodes and adds boxes — which moves the
+        // line breaks. This reading counts its lines and breaks its columns
+        // on those exact boxes, so a search would re-break the page it is
+        // meant to help the reader look at.
+        for script in [EPUBReadingStyle.findScript, EPUBReadingStyle.highlightScript] {
+            #expect(script.contains("CSS.highlights"))
+            #expect(script.contains("new Highlight("))
+            // No DOM surgery anywhere near the text.
+            #expect(!script.contains("createElement('mark')"))
+            #expect(!script.contains("surroundContents"))
+            #expect(!script.contains("innerHTML"))
+        }
+    }
+
+    @Test("A search reports its tally, and clearing it takes the paint off")
+    func searchTellsTheReaderWhereTheyAre() {
+        let script = EPUBReadingStyle.findScript
+        #expect(script.contains("kind: 'find'"))
+        #expect(script.contains("matches: hits.length"))
+        #expect(script.contains("window.__origamiFindStep"))
+        #expect(script.contains("window.__origamiFindClear"))
+        // Stepping wraps: a reader at the last hit means the first.
+        #expect(script.contains("% hits.length"))
+    }
+
+    @Test("The place is kept as a fraction, not as an offset")
+    func placeSurvivesADifferentScreen() {
+        // A reader comes back at another text size, on another screen, in
+        // another of the readings. A pixel offset means none of those.
+        let script = EPUBReadingStyle.positionScript
+        #expect(script.contains("kind: 'position'"))
+        #expect(script.contains("scrollTop / travel"))
+        #expect(script.contains("window.__origamiGoToFraction"))
+        // Throttled, because this ends in a write to disk.
+        #expect(script.contains("setTimeout"))
+    }
+
+    @Test("A mark whose words have gone is reported, not drawn somewhere else")
+    func lostMarksSaySo() {
+        // The marks are not in the book — they are annotations in a sidecar
+        // — so every open has to find the quoted words again. Painting a
+        // near-miss would put the reader's highlight on a sentence they
+        // never marked.
+        let script = EPUBReadingStyle.highlightScript
+        #expect(script.contains("missing.push(mark.id)"))
+        #expect(script.contains("kind: 'marks'"))
+        #expect(script.contains("missing: missing"))
+    }
+
+    @Test("The marks' colours are named by the app, not by the format")
+    func theAppOwnsThePalette() {
+        // `::highlight()` takes no colour from a Highlight object: the group
+        // is named in JavaScript and coloured in CSS, so the two have to
+        // agree on the name. The format has no opinion about what
+        // "Disagree" looks like.
+        let sheet = EPUBReadingStyle.markStyleScript(
+            groups: [(name: "origami-mark-quotable", background: "rgba(1, 2, 3, 0.55)")])
+        #expect(sheet.contains("::highlight(origami-mark-quotable)"))
+        #expect(sheet.contains("rgba(1, 2, 3, 0.55)"))
+        // Its own sheet, so restating the typography cannot wipe it.
+        #expect(sheet.contains("reader-marks"))
+        #expect(!sheet.contains("reader-typography"))
+        // The search's two are the format's own, and not a mark's colour.
+        #expect(sheet.contains("::highlight(origami-find)"))
+        #expect(sheet.contains("::highlight(origami-find-at)"))
+    }
+
+    @Test("A model's description is the writer's, and never its filename")
+    func undescribedModelsStayUndescribed() {
+        // An empty `alt` means the figure is undescribed. Substituting
+        // `data-filename` would announce "Spiral_Notebook__3D.usdz" as a
+        // description and assert an accessibility the document does not
+        // have — Author withdraws its `alternativeText` claim in that case
+        // precisely so the metadata can be trusted.
+        let script = EPUBReadingStyle.modelBridgeScript
+        #expect(script.contains("function describedBy(el)"))
+        #expect(script.contains("description: describedBy(host)"))
+        // The filename travels, but as its own field rather than as the
+        // description.
+        #expect(script.contains("filename: attr('data-filename')"))
+        // Whatever `describedBy` reads, it is not the filename.
+        let described = script.components(separatedBy: "function describedBy(el)")[1]
+            .components(separatedBy: "function plate(el)")[0]
+        #expect(!described.contains("data-filename"))
+    }
+
+    @Test("Of several sources, the first one this reader can draw is chosen")
+    func firstSupportedSourceWins() {
+        // A book may offer glTF beside USD. Taking the first source written
+        // would hand the app a glTF it cannot render while a perfectly good
+        // USD sat underneath it.
+        let script = EPUBReadingStyle.modelBridgeScript
+        #expect(script.contains("RENDERABLE = "))
+        #expect(script.contains("ANY_3D = "))
+        #expect(script.contains("renderable: true"))
+        #expect(script.contains("renderable: false"))
+        // glTF counts as a model, but not as one to draw.
+        #expect(script.contains("glb|gltf"))
+        let renderable = script.components(separatedBy: "RENDERABLE = ")[1]
+            .components(separatedBy: "\n")[0]
+        #expect(!renderable.contains("glb"))
+    }
+
+    @Test("A stated size is passed through, and an absent one is not invented")
+    func statedSizesTravelAndAbsentOnesDoNot() {
+        // Absent means genuinely unknown: a reader told "metres" about a
+        // centimetre model builds something a hundred times too big. The
+        // script reads the attributes as written and guesses nothing.
+        let script = EPUBReadingStyle.modelBridgeScript
+        for attribute in ["data-model-units", "data-model-extent", "data-model-up",
+                          "data-model-reduced", "data-model-source-bytes",
+                          "data-model-source", "data-model-bytes"] {
+            #expect(script.contains(attribute))
+        }
+        // No defaults anywhere near them.
+        #expect(!script.contains("|| 'm'"))
+        #expect(!script.contains("|| 'Y'"))
+    }
+
+    @Test("A model with no poster still has something to press")
+    func modelsWithoutPostersGetAPlate() {
+        let script = EPUBReadingStyle.modelBridgeScript
+        #expect(script.contains("origami-model-plate"))
+        #expect(script.contains("if (el.querySelector('img')) { return; }"))
+        // Styled, so it is a plate rather than a bare line of text.
+        #expect(css(.init()).contains(".origami-model-plate"))
+    }
+
+    @Test("The poster is framed rather than bled to the measure")
+    func posterKeepsItsOwnFrame() {
+        // It is a screenshot of Author's model window: opaque, and carrying
+        // Author's page colour. Stretched to the measure it reads as a change
+        // of paper, and in a dark reading as a hole in the page.
+        let sheet = css(.init())
+        #expect(sheet.contains("max-width: 100%"))
+        #expect(sheet.contains("figure.origami-model"))
+        #expect(sheet.contains("border-radius: 8px"))
     }
 }

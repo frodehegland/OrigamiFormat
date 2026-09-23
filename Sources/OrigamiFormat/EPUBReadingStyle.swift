@@ -156,6 +156,45 @@ public nonisolated enum EPUBReadingStyle {
         hr { border: none; border-top: 1px solid \(rule); }
         figcaption, small, .caption { color: \(quiet); }
         img, svg, video { max-width: 100%; height: auto; }
+        /* A 3-D figure. `model` is not an HTML element and this WebKit reports
+           it as an unknown one, which means `display: inline` and a width of
+           zero — so the poster inside it was the only thing with any size, and
+           the figure held together by accident. Making it a block, and giving
+           the poster the figure's width, is what turns that accident into a
+           picture. The same rules serve a book that wraps its model in an
+           `object` or a plain link, which is what a conforming EPUB does. */
+        model, object[type^="model/"] { display: block; }
+        /* `max-width`, not `width`: the poster is a screenshot of Author's
+           model window, so it is opaque and carries Author's own page colour
+           — cream, at 960 square in the export this was written against. Bled
+           to the measure it reads as a change of paper, and in a dark reading
+           as a hole in the page. At its own size inside a frame it reads as
+           what it is: a plate. */
+        model > img, object[type^="model/"] > img {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto;
+        }
+        figure.origami-model {
+            margin: 1.5em 0;
+            padding: 0.75em;
+            border: 1px solid \(rule);
+            border-radius: 8px;
+        }
+        /* It opens, so it has to look like it opens. */
+        .origami-model { cursor: pointer; }
+        figure.origami-model figcaption { color: \(quiet); }
+        /* A model the book gave no poster is still something to press. */
+        .origami-model-plate {
+            display: block;
+            padding: 2.5em 1em;
+            text-align: center;
+            font-size: 0.9em;
+            color: \(quiet);
+            background: \(block);
+            border-radius: 6px;
+        }
         table { max-width: 100%; border-collapse: collapse; }
         td, th { border: 1px solid \(rule); padding: 0.3em 0.5em; }
         pre, code { white-space: pre-wrap; word-wrap: break-word; }
@@ -205,7 +244,11 @@ public nonisolated enum EPUBReadingStyle {
           z-index: 2;
           margin: 0 0 0.6em;
           padding: 0.15em 0 0.35em;
-          background: \(paper);
+          /* `settings.paperHex`, not `paper` — in this function that name is
+             the static `paper(_:)` above, and interpolating it put a
+             function's description where a colour belonged. A sticky heading
+             with no background has the text scroll up through it. */
+          background: \(settings.paperHex);
         }
         /* The passthrough wrappers a book puts around its content take no
            part in the row; their children are the columns. */
@@ -592,6 +635,532 @@ public nonisolated enum EPUBReadingStyle {
           href: href,
           text: text,
           doi: doi
+        });
+      }, true);
+    })();
+    """
+
+    /// Finds the book's 3-D figures and hands them to the app when tapped.
+    ///
+    /// The page cannot show them itself. `model` is a WebKit proposal, not an
+    /// HTML element, and it is not implemented here: the element parses as an
+    /// unknown one, so its `source` child is inert and the USDZ beside it is
+    /// never fetched. What a reader sees is the poster, and only because the
+    /// fallback `img` happens to be a child of an inline box.
+    ///
+    /// So the page's job is to *find* the model and say where it is; the app
+    /// opens it natively. Three spellings are recognised, because a book may
+    /// use any of them and only the middle one validates: Apple's `model`,
+    /// the conforming `object`, and a plain link to the file — which is what
+    /// a book that wants to work everywhere writes.
+    ///
+    /// The href is resolved against the chapter, so the app is handed a real
+    /// file inside the unpacked book rather than a relative path it would
+    /// have to join itself.
+    ///
+    /// The poster is the figure's resting state and stays that way. In plain
+    /// HTML the child `img` is fallback content, shown only when `model` is
+    /// unsupported — but in an Author export it is not a thumbnail. The
+    /// writer opened the model, turned it to the side worth showing and took
+    /// that still, so it is editorial. Rendering the model in the column, in
+    /// its own default orientation, would throw that choice away silently.
+    /// Nothing here animates, either: a moving object in running prose is a
+    /// distraction until it is asked for.
+    public static let modelBridgeScript = """
+    (function() {
+      if (window.__origamiModels) { return; }
+      window.__origamiModels = true;
+
+      // What counts as a model at all, and the narrower set this reader can
+      // actually render. A book may offer glTF beside USD; the poster and the
+      // file are still worth offering when neither can be drawn here.
+      var ANY_3D = /\\.(usdz|usda|usdc|usd|reality|glb|gltf)(\\?|#|$)/i;
+      var RENDERABLE = /\\.(usdz|usda|usdc|usd|reality)(\\?|#|$)/i;
+      var RENDERABLE_TYPE = /(usd|vnd\\.usdz|x-reality|reality)/i;
+
+      // A book's chapter is XHTML, and in XML `tagName` is what the author
+      // typed rather than the upper case an HTML document reports. Comparing
+      // against 'MODEL' therefore matched nothing at all — in a book, which
+      // is the only place this runs.
+      function tag(el) {
+        return (el && el.tagName ? el.tagName : '').toLowerCase();
+      }
+
+      /// The source to open, and whether it is one we can draw.
+      ///
+      /// A `model` may carry several `source` children — usdz beside glb —
+      /// and the rule is to take the first one *we support*, not simply the
+      /// first one written. Taking the first would hand the app a glTF it
+      /// cannot render while a perfectly good USD sat underneath it.
+      function chooseSource(el) {
+        if (!el) { return null; }
+        if (tag(el) === 'model') {
+          var sources = el.querySelectorAll('source[src]');
+          var fallback = null;
+          for (var i = 0; i < sources.length; i++) {
+            var src = sources[i].getAttribute('src') || '';
+            var type = sources[i].getAttribute('type') || '';
+            if (!src) { continue; }
+            if (RENDERABLE.test(src) || RENDERABLE_TYPE.test(type)) {
+              return { src: src, renderable: true };
+            }
+            if (!fallback && ANY_3D.test(src)) { fallback = src; }
+          }
+          var own = el.getAttribute('src') || '';
+          if (!fallback && ANY_3D.test(own)) { fallback = own; }
+          return fallback ? { src: fallback, renderable: false } : null;
+        }
+        var direct = tag(el) === 'object'
+          ? (el.getAttribute('data') || '') : (el.getAttribute('href') || '');
+        if (!ANY_3D.test(direct)) { return null; }
+        return { src: direct, renderable: RENDERABLE.test(direct) };
+      }
+
+      function posterOf(el) {
+        var img = el.querySelector ? el.querySelector('img[src]') : null;
+        return img ? img.getAttribute('src') : '';
+      }
+
+      /// The writer's own description, and nothing standing in for it.
+      ///
+      /// An empty `alt` means the figure is undescribed, and the filename is
+      /// not a description: announcing "Spiral_Notebook__3D.usdz" would
+      /// assert an accessibility the document does not have. Author withdraws
+      /// the package's `alternativeText` claim in that case precisely so it
+      /// can be trusted, and this must not undo that. The caption counts,
+      /// because a caption is prose the writer wrote.
+      function describedBy(el) {
+        var figure = el.closest ? el.closest('figure') : null;
+        var caption = figure ? figure.querySelector('figcaption') : null;
+        if (caption && (caption.textContent || '').trim()) {
+          return (caption.textContent || '').replace(/\\s+/g, ' ').trim();
+        }
+        var img = el.querySelector ? el.querySelector('img[alt]') : null;
+        return img ? (img.getAttribute('alt') || '').trim() : '';
+      }
+
+      /// A model with no poster still has to occupy something a finger can
+      /// find. The filename is fair as a *name* here — it is labelling a
+      /// control, not claiming to describe the object.
+      function plate(el) {
+        if (tag(el) !== 'model') { return; }
+        if (el.querySelector('img')) { return; }
+        if (el.querySelector('.origami-model-plate')) { return; }
+        var box = document.createElement('div');
+        box.className = 'origami-model-plate';
+        box.setAttribute('role', 'img');
+        var name = el.getAttribute('data-filename') || '';
+        box.textContent = name || 'A 3-D model';
+        el.appendChild(box);
+      }
+
+      function hosts() {
+        var found = [];
+        var declared = document.querySelectorAll('model, object[type^="model/"]');
+        for (var i = 0; i < declared.length; i++) { found.push(declared[i]); }
+        var links = document.querySelectorAll('a[href]');
+        for (var j = 0; j < links.length; j++) {
+          if (ANY_3D.test(links[j].getAttribute('href') || '')) { found.push(links[j]); }
+        }
+        return found;
+      }
+
+      window.__origamiMarkModels = function() {
+        var marked = 0;
+        hosts().forEach(function(el) {
+          if (!chooseSource(el)) { return; }
+          el.classList.add('origami-model');
+          plate(el);
+          var figure = el.closest ? el.closest('figure') : null;
+          if (figure) { figure.classList.add('origami-model'); }
+          marked += 1;
+        });
+        return marked;
+      };
+
+      document.addEventListener('click', function(event) {
+        var marked = event.target.closest ? event.target.closest('.origami-model') : null;
+        if (!marked) { return; }
+        var host = tag(marked) === 'figure'
+          ? marked.querySelector('model, object, a[href]') : marked;
+        var chosen = chooseSource(host);
+        if (!chosen) { return; }
+        // The reading keeps its place; the model opens over it.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        var poster = posterOf(host);
+        function attr(name) { return host.getAttribute(name) || ''; }
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'model',
+          href: new URL(chosen.src, document.baseURI).href,
+          renderable: chosen.renderable,
+          poster: poster ? new URL(poster, document.baseURI).href : '',
+          // The writer's description, or empty — never the filename.
+          description: describedBy(host),
+          filename: attr('data-filename'),
+          mediaType: attr('data-media-type'),
+          bytes: attr('data-model-bytes'),
+          // Absent means genuinely unknown, and Author omits rather than
+          // guesses: a reader told "metres" about a centimetre model builds
+          // something a hundred times too big. Passed through as written so
+          // the app can tell "unknown" from "one metre".
+          units: attr('data-model-units'),
+          extent: attr('data-model-extent'),
+          up: attr('data-model-up'),
+          reduced: attr('data-model-reduced'),
+          sourceBytes: attr('data-model-source-bytes'),
+          original: attr('data-model-source')
+        });
+      }, true);
+
+      window.__origamiMarkModels();
+    })();
+    """
+
+    /// The colours the reader's marks and the search are painted in.
+    ///
+    /// A separate stylesheet from the reading's own, injected under its own
+    /// id: the reading's sheet is rewritten whenever a theme or a size
+    /// changes, and these rules do not depend on any of that. `::highlight()`
+    /// takes no colour from a `Highlight` object — the group is named in
+    /// JavaScript and coloured in CSS — so the two have to agree on the
+    /// names, which is what `groups` is for.
+    ///
+    /// The app owns the palette because the app owns the categories: the
+    /// format has no opinion about what "Disagree" looks like.
+    public static func markStyleScript(groups: [(name: String, background: String)]) -> String {
+        let rules = groups
+            .map { "::highlight(\($0.name)) { background-color: \($0.background); }" }
+            .joined(separator: "\n")
+        return styleScript(css: """
+        \(rules)
+        /* The search's own two: every hit quietly, and the one the reader is
+           standing on plainly. Deliberately not a mark's colour — a search
+           makes a different kind of claim about a word than a highlight. */
+        ::highlight(origami-find) { background-color: rgba(255, 214, 10, 0.45); }
+        ::highlight(origami-find-at) { background-color: rgba(255, 149, 0, 0.85); }
+        """, id: "reader-marks")
+    }
+
+    /// Finds text in the open chapter, and marks every hit.
+    ///
+    /// Painted with the CSS Custom Highlight API rather than by wrapping
+    /// matches in elements. Wrapping would work, and every web reader used to
+    /// do it, but it *changes the document*: inserting a `mark` splits text
+    /// nodes and adds boxes, which moves the line breaks. This reading counts
+    /// its lines and breaks its columns on those exact boxes, so a search
+    /// would re-break the page it is trying to help the reader look at — and
+    /// clearing the search would break it back. A highlight range paints over
+    /// the layout and leaves it alone.
+    ///
+    /// Matches are sought within a text node rather than across the whole
+    /// chapter's text. A phrase interrupted by a `strong` or a footnote mark
+    /// is therefore missed; in running prose that is rare, and the cost of
+    /// the alternative is walking a flattened copy of the chapter and mapping
+    /// offsets back into nodes on every keystroke.
+    public static let findScript = """
+    (function() {
+      if (window.__origamiFind) { return; }
+
+      var hits = [];
+      var at = -1;
+
+      function report() {
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'find', matches: hits.length, index: hits.length ? at + 1 : 0
+        });
+      }
+
+      function paint() {
+        if (!window.CSS || !CSS.highlights) { return; }
+        CSS.highlights.delete('origami-find');
+        CSS.highlights.delete('origami-find-at');
+        if (!hits.length) { return; }
+        var rest = [];
+        for (var i = 0; i < hits.length; i++) { if (i !== at) { rest.push(hits[i]); } }
+        if (rest.length) {
+          CSS.highlights.set('origami-find', new Highlight(...rest));
+        }
+        if (at >= 0) { CSS.highlights.set('origami-find-at', new Highlight(hits[at])); }
+      }
+
+      function show() {
+        if (at < 0 || !hits[at]) { return; }
+        var rect = hits[at].getBoundingClientRect();
+        if (!rect || (!rect.top && !rect.left)) { return; }
+        // Brought into view by its own element, because in a paged reading
+        // there is nothing to scroll — the column has to be turned to, and
+        // `scrollIntoView` on a transformed row does nothing useful.
+        var node = hits[at].startContainer;
+        var element = node.nodeType === 1 ? node : node.parentElement;
+        if (!element) { return; }
+        if (window.__origamiRevealElement) {
+          window.__origamiRevealElement(element);
+        } else {
+          element.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
+      }
+
+      window.__origamiFind = function(query) {
+        hits = [];
+        at = -1;
+        var wanted = String(query || '').trim().toLowerCase();
+        if (wanted.length < 2) { paint(); report(); return; }
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: function(node) {
+            if (!node.nodeValue || !node.nodeValue.trim()) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            var parent = node.parentElement;
+            // A script or a style is not the book, and neither is the
+            // Visual-Meta block the page carries for machines.
+            if (!parent || parent.closest('script, style, #visual-meta')) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        var node;
+        while ((node = walker.nextNode())) {
+          var haystack = node.nodeValue.toLowerCase();
+          var from = haystack.indexOf(wanted);
+          while (from >= 0) {
+            var range = document.createRange();
+            range.setStart(node, from);
+            range.setEnd(node, from + wanted.length);
+            hits.push(range);
+            from = haystack.indexOf(wanted, from + wanted.length);
+          }
+        }
+        if (hits.length) { at = 0; }
+        paint();
+        show();
+        report();
+      };
+
+      window.__origamiFindStep = function(delta) {
+        if (!hits.length) { report(); return; }
+        // Wraps, because a reader at the last hit means the first one.
+        at = (at + (delta < 0 ? -1 : 1) + hits.length) % hits.length;
+        paint();
+        show();
+        report();
+      };
+
+      window.__origamiFindClear = function() {
+        hits = [];
+        at = -1;
+        paint();
+        report();
+      };
+    })();
+    """
+
+    /// Remembers where the reader had got to, and puts them back.
+    ///
+    /// Reported as a fraction of the chapter rather than a pixel offset: the
+    /// reader may come back at a different text size, on a different screen,
+    /// or in a different one of the readings, and a pixel offset means none
+    /// of those. A fraction means "about a third of the way in", which is
+    /// what a person remembers anyway.
+    ///
+    /// Throttled by a frame's grace, because a scroll reports continuously
+    /// and this ends in a write to disk.
+    public static let positionScript = """
+    (function() {
+      if (window.__origamiPosition) { return; }
+      window.__origamiPosition = true;
+
+      var pending = null;
+
+      function scroller() {
+        // Whichever thing actually scrolls in this reading.
+        var body = document.body;
+        if (body.scrollHeight > body.clientHeight + 4) { return body; }
+        var root = document.documentElement;
+        if (root.scrollHeight > root.clientHeight + 4) { return root; }
+        return null;
+      }
+
+      function fraction() {
+        var box = scroller();
+        if (!box) { return 0; }
+        var travel = box.scrollHeight - box.clientHeight;
+        if (travel <= 0) { return 0; }
+        return Math.min(Math.max(box.scrollTop / travel, 0), 1);
+      }
+
+      function tell() {
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'position', fraction: fraction()
+        });
+      }
+
+      window.addEventListener('scroll', function() {
+        if (pending) { return; }
+        pending = setTimeout(function() { pending = null; tell(); }, 400);
+      }, true);
+
+      window.__origamiGoToFraction = function(wanted) {
+        var box = scroller();
+        if (!box) { return; }
+        var travel = box.scrollHeight - box.clientHeight;
+        if (travel <= 0) { return; }
+        box.scrollTop = travel * Math.min(Math.max(Number(wanted) || 0, 0), 1);
+      };
+    })();
+    """
+
+    /// Paints the reader's own highlights back onto the page.
+    ///
+    /// The marks are not in the book — they are W3C annotations in a sidecar,
+    /// so the book is never written to — which means every open has to find
+    /// the quoted words again. The quote is looked for inside the element the
+    /// annotation named; failing that, anywhere in the chapter. A quote whose
+    /// words have gone is simply not painted, and says so, rather than being
+    /// drawn somewhere plausible and wrong.
+    ///
+    /// Same painting as the search, and for the same reason: a highlight that
+    /// re-broke the lines would move the sentence it is marking.
+    public static let highlightScript = """
+    (function() {
+      if (window.__origamiPaintMarks) { return; }
+
+      function textNodes(root) {
+        var found = [];
+        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+          acceptNode: function(node) {
+            if (!node.nodeValue) { return NodeFilter.FILTER_REJECT; }
+            var parent = node.parentElement;
+            if (!parent || parent.closest('script, style, #visual-meta')) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        var node;
+        while ((node = walker.nextNode())) { found.push(node); }
+        return found;
+      }
+
+      /// The range holding `exact` within `root`, preferring the occurrence
+      /// that follows `prefix` — which is what makes a second "the same
+      /// sentence" land on the right one.
+      function locate(root, exact, prefix) {
+        if (!root || !exact) { return null; }
+        var wanted = exact.replace(/\\s+/g, ' ').trim();
+        if (!wanted) { return null; }
+        var nodes = textNodes(root);
+        var best = null;
+        for (var i = 0; i < nodes.length; i++) {
+          var haystack = nodes[i].nodeValue.replace(/\\s+/g, ' ');
+          var from = haystack.indexOf(wanted);
+          while (from >= 0) {
+            var range = document.createRange();
+            range.setStart(nodes[i], from);
+            range.setEnd(nodes[i], from + wanted.length);
+            if (!best) { best = range; }
+            if (prefix) {
+              var runUp = haystack.slice(Math.max(0, from - prefix.length), from);
+              if (runUp.indexOf(prefix.replace(/\\s+/g, ' ').slice(-12)) >= 0) {
+                return range;
+              }
+            } else {
+              return range;
+            }
+            from = haystack.indexOf(wanted, from + wanted.length);
+          }
+        }
+        return best;
+      }
+
+      /// `marks` is [{ id, exact, prefix, element, group }]. Grouped by
+      /// `group` so one highlight layer serves each colour.
+      window.__origamiPaintMarks = function(marks) {
+        if (!window.CSS || !CSS.highlights) { return 0; }
+        var known = window.__origamiMarkGroups || [];
+        for (var g = 0; g < known.length; g++) { CSS.highlights.delete(known[g]); }
+
+        var byGroup = {};
+        var missing = [];
+        (marks || []).forEach(function(mark) {
+          var root = null;
+          if (mark.element) { root = document.getElementById(mark.element); }
+          var range = locate(root || document.body, mark.exact, mark.prefix)
+            || (root ? locate(document.body, mark.exact, mark.prefix) : null);
+          if (!range) { missing.push(mark.id); return; }
+          var group = mark.group || 'origami-mark';
+          (byGroup[group] = byGroup[group] || []).push(range);
+        });
+
+        var groups = Object.keys(byGroup);
+        groups.forEach(function(group) {
+          CSS.highlights.set(group, new Highlight(...byGroup[group]));
+        });
+        window.__origamiMarkGroups = groups;
+
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'marks', painted: (marks || []).length - missing.length, missing: missing
+        });
+        return groups.length;
+      };
+    })();
+    """
+
+    /// Hands a tapped picture to the app, so it can be lifted out of the
+    /// column and looked at properly.
+    ///
+    /// A figure in a book is printed at the measure's width, which on a phone
+    /// or in a column is often smaller than the plate it was drawn at. The
+    /// reading cannot help that — the text has to keep its measure — so the
+    /// picture leaves the page instead.
+    ///
+    /// Three kinds of image are deliberately left alone. A 3-D figure's
+    /// poster, because tapping that opens the model and the model is the
+    /// point. An image inside a link, because the link is what the author
+    /// meant to be tappable. And anything small, because a page is full of
+    /// bullets, rules, logos and inline glyphs that are images in markup and
+    /// furniture in fact — lifting a 16-point icon into a window of its own
+    /// would be a joke at the reader's expense.
+    public static let imageBridgeScript = """
+    (function() {
+      if (window.__origamiImages) { return; }
+      window.__origamiImages = true;
+
+      // Below this, in points on screen, an image is furniture.
+      var SMALLEST = 48;
+
+      function liftable(img) {
+        if (!img || !img.getAttribute('src')) { return false; }
+        if (img.closest && img.closest('.origami-model')) { return false; }
+        if (img.closest && img.closest('a[href]')) { return false; }
+        var box = img.getBoundingClientRect();
+        return Math.min(box.width, box.height) >= SMALLEST;
+      }
+
+      // What the book calls it: the figure's caption if there is one, else
+      // the alternative text. Both may be missing, and then the window falls
+      // back to the filename.
+      function labelOf(img) {
+        var figure = img.closest ? img.closest('figure') : null;
+        var caption = figure ? figure.querySelector('figcaption') : null;
+        if (caption && (caption.textContent || '').trim()) {
+          return (caption.textContent || '').replace(/\\s+/g, ' ').trim();
+        }
+        return (img.getAttribute('alt') || '').trim();
+      }
+
+      document.addEventListener('click', function(event) {
+        var img = event.target && event.target.tagName
+          && event.target.tagName.toLowerCase() === 'img' ? event.target : null;
+        if (!liftable(img)) { return; }
+        // The reading keeps its place; the picture comes out over it.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.webkit.messageHandlers.reader.postMessage({
+          kind: 'image',
+          href: new URL(img.getAttribute('src'), document.baseURI).href,
+          label: labelOf(img)
         });
       }, true);
     })();
@@ -1029,13 +1598,48 @@ public nonisolated enum EPUBReadingStyle {
     /// it matters: at document start there is no `<head>` to attach to, so
     /// the first injection lands on `<html>`, ahead of the book's own
     /// stylesheet; running again at document end puts it last, where it wins.
-    public static func styleScript(css: String) -> String {
+    /// Declares the viewport, because the book almost never does.
+    ///
+    /// Without `width=device-width` WebKit lays the page out at its default
+    /// 980-point width and then scales the result down to fit the screen. On
+    /// the smallest iPad that is a factor of 0.76, applied to everything at
+    /// once: the reader asks for 17-point text and gets 13, and the 2em the
+    /// reading sets either side arrives as 1.5em. It reads as a page of a
+    /// desktop web site seen from too far away — which is exactly what it
+    /// is.
+    ///
+    /// Nothing in the book will say it: the ACM article Reader tests
+    /// against declares a charset and nothing else, and a reflowable book
+    /// has no reason to think about viewports at all. So the reading says
+    /// it on the book's behalf, and the reader's chosen size becomes the
+    /// size on the glass.
+    public static let viewportScript = """
+    (function() {
+      var meta = document.querySelector('meta[name="viewport"]');
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('name', 'viewport');
+        (document.head || document.documentElement).appendChild(meta);
+      }
+      // A book that ships a fixed-width viewport of its own is making the
+      // same mistake in its own hand, so this is set rather than defaulted.
+      meta.setAttribute('content', 'width=device-width, initial-scale=1');
+    })();
+    """
+
+    /// `id` names the sheet, so a second one can stand beside the reading's
+    /// own without either overwriting the other: the typography is rewritten
+    /// on every change of theme or size, and the marks' colours are not.
+    public static func styleScript(css: String, id: String = "reader-typography") -> String {
         let escaped = css
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")
+        let elementID = id
+            .replacingOccurrences(of: "\\", with: "")
+            .replacingOccurrences(of: "'", with: "")
         return """
         (function() {
-          var id = 'reader-typography';
+          var id = '\(elementID)';
           var style = document.getElementById(id);
           if (!style) {
             style = document.createElement('style');
