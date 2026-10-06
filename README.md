@@ -1,5 +1,15 @@
 # OrigamiFormat
 
+> **Looking for the format specification or the app?** They live in
+> [frodehegland/OrigamiText](https://github.com/frodehegland/OrigamiText):
+> the normative [Origami EPUB Profile 1.0](https://github.com/frodehegland/OrigamiText/blob/main/ORIGAMI-EPUB-PROFILE-1.0.md),
+> its [JSON schemas](https://github.com/frodehegland/OrigamiText/tree/main/origami-schemas),
+> the full source of the macOS app, and a
+> [rebuild guide](https://github.com/frodehegland/OrigamiText/tree/main/rebuild)
+> that describes the app closely enough to build it again on any platform.
+> This repository is a smaller thing: a Swift package of format-level code
+> shared by Origami apps.
+
 The Origami Text format, as code: the annotation model, its sidecar, the
 anchoring ladder, document identity, the EPUB container reader, and the
 reading presentation. No UI, no app model, no network — Foundation and
@@ -66,9 +76,12 @@ here writes into a book.
 .package(path: "../OrigamiFormat")
 ```
 
-Reader reaches it through `AugmentedLibraryCore`, which re-exports it;
-Origami Text links it into `LiquidView`. Both keep their own colour
-plumbing, persisted settings and UI — only the format is shared.
+Reader reaches it through `AugmentedLibraryCore`, which re-exports it.
+Origami Text does **not** link it yet: it still carries its own copies of
+this code, which have moved on since September 2026 (the Profile 1.0
+writer, multilingual metadata). Until it adopts the package, treat
+Origami Text's source as the reference where the two differ — the rebuild
+guide's chapter 3 lists the differences.
 
 ## Tests
 
