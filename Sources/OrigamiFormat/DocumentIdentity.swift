@@ -14,12 +14,17 @@ import Foundation
 ///
 /// 1. **The DOI**, where the work has one. It is the name the rest of the
 ///    world already uses, it resolves, and it is not ours to invent.
-/// 2. **A content hash** otherwise — `urn:origami:sha256:<hex>` — because
+/// 2. **The publication's own identifier**, when it is globally unique —
+///    `urn:uuid:` or `urn:isbn:`, as an Origami Profile 1.0 EPUB's
+///    `dc:identifier` is. It survives re-export, where a hash would not.
+///    Any other package identifier (a bare "bookid", a database key) may
+///    not be unique, and is passed over.
+/// 3. **A content hash** otherwise — `urn:origami:sha256:<hex>` — because
 ///    two readers with the same file should reach the same name for it
 ///    without asking anybody. A URN, not a URL, because it names rather
 ///    than locates.
-/// 3. **The app's own local name** as a last resort, for a card with
-///    neither: better a name only one app understands than no name.
+/// 4. **The app's own local name** as a last resort, for a card with
+///    none of these: better a name only one app understands than no name.
 ///
 /// Reading is deliberately more generous than writing: `normalised` maps
 /// every form either app has ever written onto a comparable key, so notes
@@ -43,10 +48,14 @@ public nonisolated enum DocumentIdentity {
     /// the app's own identifier — a Reader record id, an Origami address —
     /// used only when there is nothing better.
     public static func canonical(doi: String? = nil,
+                                 publicationID: String? = nil,
                                  contentHash: String? = nil,
                                  localName: String? = nil) -> String {
         if let bare = DOI.bare(doi) {
             return "https://doi.org/" + bare
+        }
+        if let publicationID, let unique = globallyUnique(publicationID) {
+            return unique
         }
         if let contentHash, isContentHash(contentHash) {
             return hashScheme + contentHash.lowercased()
@@ -69,6 +78,9 @@ public nonisolated enum DocumentIdentity {
 
         // Any spelling of a DOI, including a bare one.
         if let bare = doiPortion(of: trimmed) { return "doi:" + bare }
+
+        // "uuid:…" or "isbn:…".
+        if let unique = globallyUnique(trimmed) { return String(unique.dropFirst(4)) }
 
         if let hash = after(hashScheme, in: trimmed) { return "sha256:" + hash.lowercased() }
 
@@ -105,6 +117,23 @@ public nonisolated enum DocumentIdentity {
         // one — a sentence that mentions a DOI is not an identifier.
         if lowered.hasPrefix("10."), let bare = DOI.extract(from: iri), bare == lowered {
             return bare
+        }
+        return nil
+    }
+
+    /// A publication identifier that names one publication everywhere,
+    /// in its canonical spelling: `urn:uuid:` with a valid lowercase UUID,
+    /// or `urn:isbn:` with 10 or 13 digits. Nil for anything else.
+    public static func globallyUnique(_ identifier: String) -> String? {
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = trimmed.lowercased()
+        if lowered.hasPrefix("urn:uuid:"),
+           UUID(uuidString: String(trimmed.dropFirst(9))) != nil {
+            return "urn:uuid:" + String(lowered.dropFirst(9))
+        }
+        if lowered.hasPrefix("urn:isbn:") {
+            let digits = trimmed.dropFirst(9).filter { $0.isNumber || $0 == "X" || $0 == "x" }
+            if digits.count == 10 || digits.count == 13 { return "urn:isbn:" + digits.uppercased() }
         }
         return nil
     }

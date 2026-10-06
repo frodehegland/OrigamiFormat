@@ -87,6 +87,21 @@ struct DocumentIdentityTests {
         #expect(!DocumentIdentity.isContentHash(String(repeating: "a", count: 63)))
     }
 
+    @Test("A unique publication identifier comes after the DOI and before the hash")
+    func publicationIdentifier() {
+        let uuid = "urn:uuid:12345678-1234-1234-1234-1234567890AB"
+        #expect(DocumentIdentity.canonical(doi: "10.1145/3345001", publicationID: uuid, contentHash: hash)
+                == "https://doi.org/10.1145/3345001")
+        #expect(DocumentIdentity.canonical(publicationID: uuid, contentHash: hash)
+                == "urn:uuid:12345678-1234-1234-1234-1234567890ab")
+        #expect(DocumentIdentity.canonical(publicationID: "urn:isbn:978-1-234567-89-0")
+                == "urn:isbn:9781234567890")
+        // Not globally unique: passed over for the hash.
+        #expect(DocumentIdentity.canonical(publicationID: "bookid-42", contentHash: hash)
+                == "urn:origami:sha256:" + hash)
+        #expect(DocumentIdentity.isSameDocument(uuid.uppercased(), uuid.lowercased()))
+    }
+
     @Test("An annotation written by Reader names the document canonically")
     func throughTheAnnotation() {
         let withDOI = WebAnnotation.source(forRecordID: hash, doi: "10.1145/3345001")
