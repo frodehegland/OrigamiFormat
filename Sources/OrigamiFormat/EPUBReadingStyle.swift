@@ -56,8 +56,8 @@ public nonisolated enum EPUBReadingStyle {
                     layout: EPUBReadingLayout = .scrolling,
                     scale: Double = 1,
                     lineSpacing: Double = 1.6,
-                    bodyFont: EPUBReadingFont = .book,
-                    headingFont: EPUBReadingFont = .book,
+                    bodyFont: EPUBReadingFont = .serif,
+                    headingFont: EPUBReadingFont = .serif,
                     dark: Bool = false,
                     horizontalScroller: HorizontalScroller = .platformDefault) {
             self.theme = theme
@@ -99,6 +99,14 @@ public nonisolated enum EPUBReadingStyle {
             : ""
         let bodyFamily = settings.bodyFont.cssFamily.map { "font-family: \($0);" } ?? ""
         let headingFamily = settings.headingFont.cssFamily.map { "font-family: \($0);" } ?? ""
+        // Bold headings with a larger level 1 are Reader's own typographic
+        // default — skipped only when the reading is set to the book's own
+        // heading face, which asks Reader to leave the book's heading
+        // design alone entirely rather than impose weight or size over it.
+        let headingWeight = settings.headingFont == .book ? "" : "font-weight: bold;"
+        let h1Rule = settings.headingFont == .book
+            ? ""
+            : "h1 { font-size: \(String(format: "%.1f", 17 * max(0.5, settings.scale) * 1.6))px; }"
 
         // Where the reading is paged by transform, `html` is the window
         // onto it: it clips, and it gives the definite height the columns
@@ -139,7 +147,8 @@ public nonisolated enum EPUBReadingStyle {
             -webkit-font-smoothing: antialiased;
         }
         \(clearBookBackgrounds)
-        h1, h2, h3, h4, h5, h6 { color: \(ink); line-height: 1.25; \(headingFamily) }
+        h1, h2, h3, h4, h5, h6 { color: \(ink); line-height: 1.25; \(headingWeight) \(headingFamily) }
+        \(h1Rule)
         /* Links and citations read in the body's own ink. A scholarly
            page is dense with them — every reference, every glossary term,
            every cross-reference — and in blue the page turns into a
